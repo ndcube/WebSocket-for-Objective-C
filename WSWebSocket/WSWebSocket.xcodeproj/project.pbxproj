@@ -1,0 +1,233 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 46;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		3ABBCD9B14E1B4A300B24E95 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3ABBCD9A14E1B4A300B24E95 /* Foundation.framework */; };
+		3ABBCDA114E1B4A300B24E95 /* WSWebSocket.m in Sources */ = {isa = PBXBuildFile; fileRef = 3ABBCDA014E1B4A300B24E95 /* WSWebSocket.m */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		3ABBCD9714E1B4A300B24E95 /* libWSWebSocket.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libWSWebSocket.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		3ABBCD9A14E1B4A300B24E95 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+		3ABBCD9E14E1B4A300B24E95 /* WSWebSocket-Prefix.pch */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "WSWebSocket-Prefix.pch"; sourceTree = "<group>"; };
+		3ABBCD9F14E1B4A300B24E95 /* WSWebSocket.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WSWebSocket.h; sourceTree = "<group>"; };
+		3ABBCDA014E1B4A300B24E95 /* WSWebSocket.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = WSWebSocket.m; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		3ABBCD9414E1B4A300B24E95 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3ABBCD9B14E1B4A300B24E95 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		3ABBCD8C14E1B4A300B24E95 = {
+			isa = PBXGroup;
+			children = (
+				3ABBCD9C14E1B4A300B24E95 /* WSWebSocket */,
+				3ABBCD9914E1B4A300B24E95 /* Frameworks */,
+				3ABBCD9814E1B4A300B24E95 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		3ABBCD9814E1B4A300B24E95 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				3ABBCD9714E1B4A300B24E95 /* libWSWebSocket.a */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		3ABBCD9914E1B4A300B24E95 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3ABBCD9A14E1B4A300B24E95 /* Foundation.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		3ABBCD9C14E1B4A300B24E95 /* WSWebSocket */ = {
+			isa = PBXGroup;
+			children = (
+				3ABBCD9F14E1B4A300B24E95 /* WSWebSocket.h */,
+				3ABBCDA014E1B4A300B24E95 /* WSWebSocket.m */,
+				3ABBCD9D14E1B4A300B24E95 /* Supporting Files */,
+			);
+			path = WSWebSocket;
+			sourceTree = "<group>";
+		};
+		3ABBCD9D14E1B4A300B24E95 /* Supporting Files */ = {
+			isa = PBXGroup;
+			children = (
+				3ABBCD9E14E1B4A300B24E95 /* WSWebSocket-Prefix.pch */,
+			);
+			name = "Supporting Files";
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXHeadersBuildPhase section */
+		3ABBCD9514E1B4A300B24E95 /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXHeadersBuildPhase section */
+
+/* Begin PBXNativeTarget section */
+		3ABBCD9614E1B4A300B24E95 /* WSWebSocket */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3ABBCDA414E1B4A300B24E95 /* Build configuration list for PBXNativeTarget "WSWebSocket" */;
+			buildPhases = (
+				3ABBCD9314E1B4A300B24E95 /* Sources */,
+				3ABBCD9414E1B4A300B24E95 /* Frameworks */,
+				3ABBCD9514E1B4A300B24E95 /* Headers */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = WSWebSocket;
+			productName = WSWebSocket;
+			productReference = 3ABBCD9714E1B4A300B24E95 /* libWSWebSocket.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		3ABBCD8E14E1B4A300B24E95 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 0420;
+			};
+			buildConfigurationList = 3ABBCD9114E1B4A300B24E95 /* Build configuration list for PBXProject "WSWebSocket" */;
+			compatibilityVersion = "Xcode 3.2";
+			developmentRegion = English;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+			);
+			mainGroup = 3ABBCD8C14E1B4A300B24E95;
+			productRefGroup = 3ABBCD9814E1B4A300B24E95 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				3ABBCD9614E1B4A300B24E95 /* WSWebSocket */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3ABBCD9314E1B4A300B24E95 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3ABBCDA114E1B4A300B24E95 /* WSWebSocket.m in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		3ABBCDA214E1B4A300B24E95 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = "$(ARCHS_STANDARD_32_BIT)";
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_SYMBOLS_PRIVATE_EXTERN = NO;
+				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
+				GCC_WARN_ABOUT_MISSING_PROTOTYPES = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 5.0;
+				SDKROOT = iphoneos;
+			};
+			name = Debug;
+		};
+		3ABBCDA314E1B4A300B24E95 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = "$(ARCHS_STANDARD_32_BIT)";
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu99;
+				GCC_VERSION = com.apple.compilers.llvm.clang.1_0;
+				GCC_WARN_ABOUT_MISSING_PROTOTYPES = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 5.0;
+				SDKROOT = iphoneos;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		3ABBCDA514E1B4A300B24E95 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DSTROOT = /tmp/WSWebSocket.dst;
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = "WSWebSocket/WSWebSocket-Prefix.pch";
+				OTHER_LDFLAGS = "-ObjC";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		3ABBCDA614E1B4A300B24E95 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				DSTROOT = /tmp/WSWebSocket.dst;
+				GCC_PRECOMPILE_PREFIX_HEADER = YES;
+				GCC_PREFIX_HEADER = "WSWebSocket/WSWebSocket-Prefix.pch";
+				OTHER_LDFLAGS = "-ObjC";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		3ABBCD9114E1B4A300B24E95 /* Build configuration list for PBXProject "WSWebSocket" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3ABBCDA214E1B4A300B24E95 /* Debug */,
+				3ABBCDA314E1B4A300B24E95 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		3ABBCDA414E1B4A300B24E95 /* Build configuration list for PBXNativeTarget "WSWebSocket" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3ABBCDA514E1B4A300B24E95 /* Debug */,
+				3ABBCDA614E1B4A300B24E95 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 3ABBCD8E14E1B4A300B24E95 /* Project object */;
+}
