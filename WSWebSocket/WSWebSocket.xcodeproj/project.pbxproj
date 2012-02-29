@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		3ABBCD9B14E1B4A300B24E95 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3ABBCD9A14E1B4A300B24E95 /* Foundation.framework */; };
 		3ABBCDA114E1B4A300B24E95 /* WSWebSocket.m in Sources */ = {isa = PBXBuildFile; fileRef = 3ABBCDA014E1B4A300B24E95 /* WSWebSocket.m */; };
+		3AEBB38B14FEBE9F006CE52E /* NSString+Base64.h in Headers */ = {isa = PBXBuildFile; fileRef = 3AEBB38914FEBE9F006CE52E /* NSString+Base64.h */; };
+		3AEBB38C14FEBE9F006CE52E /* NSString+Base64.m in Sources */ = {isa = PBXBuildFile; fileRef = 3AEBB38A14FEBE9F006CE52E /* NSString+Base64.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -17,6 +19,8 @@
 		3ABBCD9E14E1B4A300B24E95 /* WSWebSocket-Prefix.pch */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "WSWebSocket-Prefix.pch"; sourceTree = "<group>"; };
 		3ABBCD9F14E1B4A300B24E95 /* WSWebSocket.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = WSWebSocket.h; sourceTree = "<group>"; };
 		3ABBCDA014E1B4A300B24E95 /* WSWebSocket.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = WSWebSocket.m; sourceTree = "<group>"; };
+		3AEBB38914FEBE9F006CE52E /* NSString+Base64.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = "NSString+Base64.h"; sourceTree = "<group>"; };
+		3AEBB38A14FEBE9F006CE52E /* NSString+Base64.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = "NSString+Base64.m"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -59,6 +63,8 @@
 		3ABBCD9C14E1B4A300B24E95 /* WSWebSocket */ = {
 			isa = PBXGroup;
 			children = (
+				3AEBB38914FEBE9F006CE52E /* NSString+Base64.h */,
+				3AEBB38A14FEBE9F006CE52E /* NSString+Base64.m */,
 				3ABBCD9F14E1B4A300B24E95 /* WSWebSocket.h */,
 				3ABBCDA014E1B4A300B24E95 /* WSWebSocket.m */,
 				3ABBCD9D14E1B4A300B24E95 /* Supporting Files */,
@@ -81,6 +87,7 @@
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3AEBB38B14FEBE9F006CE52E /* NSString+Base64.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -135,6 +142,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3ABBCDA114E1B4A300B24E95 /* WSWebSocket.m in Sources */,
+				3AEBB38C14FEBE9F006CE52E /* NSString+Base64.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -226,6 +234,7 @@
 				3ABBCDA614E1B4A300B24E95 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
 	};

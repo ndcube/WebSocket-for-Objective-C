@@ -7,9 +7,38 @@
 //
 
 #import "WSWebSocket.h"
+#import <CommonCrypto/CommonDigest.h>
+#import <Security/Security.h>
+
+#import "NSString+Base64.h"
 
 
 static const NSInteger bufferSize = 1024;
+static const NSInteger nonceSize = 16;
+static NSString *const WSAcceptGUID = @"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+static NSString *const WSScheme = @"ws";
+static NSString *const WSSchemeSecure = @"wss";
+
+static NSString *const WSConnection = @"Connection";
+static NSString *const WSConnectionValue = @"Upgrade";
+static NSString *const WSGet = @"GET";
+static NSString *const WSHost = @"Host";
+static NSString *const WSHTTP11 = @"HTTP/1.1";
+static NSString *const WSOrigin = @"Origin";
+static NSString *const WSUpgrade = @"Upgrade";
+static NSString *const WSUpgradeValue = @"websocket";
+static NSString *const WSVersion = @"13";
+
+static NSString *const WSSecWebSocketAccept = @"Sec-WebSocket-Accept";
+static NSString *const WSSecWebSocketExtensions = @"Sec-WebSocket-Extensions";
+static NSString *const WSSecWebSocketKey = @"Sec-WebSocket-Key";
+static NSString *const WSSecWebSocketProtocol = @"Sec-WebSocket-Protocol";
+static NSString *const WSSecWebSocketProtocolClient = @"Sec-WebSocket-Protocol-Client";
+static NSString *const WSSecWebSocketProtocolServer = @"Sec-WebSocket-Protocol-Server";
+static NSString *const WSSecWebSocketVersion = @"Sec-WebSocket-Version";
+static NSString *const WSSecWebSocketVersionClient = @"Sec-WebSocket-Version-Client";
+static NSString *const WSSecWebSocketVersionServer = @"Sec-WebSocket-Version-Server";
 
 
 @implementation WSWebSocket {
@@ -30,6 +59,25 @@ static const NSInteger bufferSize = 1024;
 - (void)analyzeURL:(NSURL *)url {
     NSAssert(url.scheme, @"Incorrect URL. Unable to determine scheme from URL: %@", url);
     NSAssert(url.host, @"Incorrect URL. Unable to determine host from URL: %@", url);
+}
+
+- (NSData *)SHA1DigestOfString:(NSString *)aString {
+    NSData *data = [aString dataUsingEncoding:NSUTF8StringEncoding];
+    
+    unsigned char digest[CC_SHA1_DIGEST_LENGTH];
+    CC_SHA1(data.bytes, data.length, digest);
+    
+    return [NSData dataWithBytes:digest length:CC_SHA1_DIGEST_LENGTH];
+}
+
+- (NSString *)nonce {
+    unsigned char nonce[nonceSize];
+    SecRandomCopyBytes(kSecRandomDefault, nonceSize, nonce);
+    return [NSString encodeBase64WithData:[NSData dataWithBytes:nonce length:nonceSize]];
+}
+
+- (NSString *)acceptKeyFromNonce:(NSString *)nonce {
+    return [NSString encodeBase64WithData:[self SHA1DigestOfString:[nonce stringByAppendingString:WSAcceptGUID]]];    
 }
 
 
@@ -70,6 +118,9 @@ static const NSInteger bufferSize = 1024;
     else {
         NSLog(@"Read error!");
     }
+
+    NSLog(@"bytesRead: %d", bytesRead);
+    NSLog(@"Data received: %@", [[NSString alloc] initWithData:dataReceived encoding:NSUTF8StringEncoding]);
 }
 
 - (void)writeToStream {
@@ -89,6 +140,10 @@ static const NSInteger bufferSize = 1024;
     
     if (length > 0) {
         bytesSent += length;
+        
+        if (bytesSent >= dataToSend.length) {
+            dataToSend = nil;
+        }
     }
     else {
         NSLog(@"Write error!");
@@ -103,11 +158,11 @@ static const NSInteger bufferSize = 1024;
     
     switch (eventCode) {
         case NSStreamEventOpenCompleted:
-            NSLog(@"Opened");
+            NSLog(@"Opened :%@", aStream);
             break;
         case NSStreamEventHasBytesAvailable:            
             NSLog(@"Bytes available");
-            
+
             [self readFromStream];
 
             if (aStream != inputStream) {
@@ -128,7 +183,7 @@ static const NSInteger bufferSize = 1024;
             NSLog(@"Error: %@", aStream.streamError);
             break;
         case NSStreamEventEndEncountered:
-            NSLog(@"Closed");
+            NSLog(@"Closed :%@", aStream);
             [self closeStream:aStream];
             break;
         default:
@@ -138,12 +193,37 @@ static const NSInteger bufferSize = 1024;
 }
 
 
+#pragma mark - Handshake
+
+
+- (void)sendOpeningHandshake {
+    
+    NSString *nonce = [self nonce];
+    NSString *path = serverURL.path.length ? serverURL.path : @"/";
+    
+    NSString *handshake = [NSString stringWithFormat:
+                           @"%@ %@ %@\r\n%@: %@\r\n%@: %@\r\n%@: %@\r\n%@: %@\r\n%@: %@\r\n\r\n",
+                           WSGet, path, WSHTTP11,
+                           WSHost, serverURL.host,
+                           WSUpgrade, WSUpgradeValue,
+                           WSConnection, WSConnectionValue,
+                           WSSecWebSocketVersion, WSVersion,
+                           WSSecWebSocketKey, nonce];
+    
+    dataToSend = [NSMutableData dataWithData:[handshake dataUsingEncoding:NSUTF8StringEncoding]];
+
+    NSLog(@"%@", handshake);
+    NSLog(@"%@", [self acceptKeyFromNonce:nonce]);
+}
+
+
 #pragma mark - Public interface
 
 
 - (void)open {
     [inputStream open];
     [outputStream open];
+    [self sendOpeningHandshake];
 }
 
 - (void)close {
