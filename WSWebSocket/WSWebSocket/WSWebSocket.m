@@ -13,8 +13,10 @@
 #import "NSString+Base64.h"
 
 
-static const NSInteger bufferSize = 1024;
-static const NSInteger nonceSize = 16;
+static const NSInteger WSBufferSize = 1024;
+static const NSInteger WSNonceSize = 16;
+static const NSInteger WSPort = 80;
+static const NSInteger WSPortSecure = 443;
 static NSString *const WSAcceptGUID = @"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 static NSString *const WSScheme = @"ws";
@@ -40,16 +42,50 @@ static NSString *const WSSecWebSocketVersion = @"Sec-WebSocket-Version";
 static NSString *const WSSecWebSocketVersionClient = @"Sec-WebSocket-Version-Client";
 static NSString *const WSSecWebSocketVersionServer = @"Sec-WebSocket-Version-Server";
 
+static NSString *const WSHTTPCode101 = @"101";
+
+
+typedef enum {
+    WSWebSocketStateNone = 0,
+    WSWebSocketStateConnencting = 1,
+    WSWebSocketStateOpen = 2,
+    WSWebSocketStateClosing = 3,
+    WSWebSocketStateClosed = 4
+}WSWebSocketStateType;
+
 
 @implementation WSWebSocket {
     NSURL *serverURL;
     NSInputStream *inputStream;
     NSOutputStream *outputStream;
+    
     NSMutableData *dataReceived;
     NSMutableData *dataToSend;
     NSInteger bytesRead;
     NSInteger bytesSent;
+    
     BOOL hasSpaceAvailable;
+    
+    NSMutableArray *datasReceived;
+    NSMutableArray *datasToSend;
+    
+    WSWebSocketStateType state;
+    NSString *acceptKey;
+}
+
+
+#pragma mark - Object lifecycle
+
+
+- (id)initWithUrl:(NSURL *)url {
+    self = [super init];
+    if (self) {
+        datasReceived = [[NSMutableArray alloc] init];
+        datasToSend = [[NSMutableArray alloc] init];
+        [self analyzeURL:url];
+        serverURL = url;
+    }
+    return self;
 }
 
 
@@ -71,9 +107,9 @@ static NSString *const WSSecWebSocketVersionServer = @"Sec-WebSocket-Version-Ser
 }
 
 - (NSString *)nonce {
-    unsigned char nonce[nonceSize];
-    SecRandomCopyBytes(kSecRandomDefault, nonceSize, nonce);
-    return [NSString encodeBase64WithData:[NSData dataWithBytes:nonce length:nonceSize]];
+    unsigned char nonce[WSNonceSize];
+    SecRandomCopyBytes(kSecRandomDefault, WSNonceSize, nonce);
+    return [NSString encodeBase64WithData:[NSData dataWithBytes:nonce length:WSNonceSize]];
 }
 
 - (NSString *)acceptKeyFromNonce:(NSString *)nonce {
@@ -87,18 +123,26 @@ static NSString *const WSSecWebSocketVersionServer = @"Sec-WebSocket-Version-Ser
 - (void)initiateConnection {
     CFReadStreamRef readStream;
     CFWriteStreamRef writeStream;
-    CFStreamCreatePairWithSocketToHost(NULL, (__bridge CFStringRef)serverURL.host, 80, &readStream, &writeStream);
+    CFStreamCreatePairWithSocketToHost(NULL, (__bridge CFStringRef)serverURL.host, WSPort, &readStream, &writeStream);
     inputStream = (__bridge_transfer NSInputStream *)readStream;
     outputStream = (__bridge_transfer NSOutputStream *)writeStream;
     inputStream.delegate = self;
     outputStream.delegate = self;
     [inputStream scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
     [outputStream scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];    
+    [inputStream open];
+    [outputStream open];
 }
 
-- (void)closeStream:(NSStream *)stream {
-    [stream close];
-    [stream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+- (void)closeConnection {
+    [inputStream close];
+    [outputStream close];
+    [inputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+    [outputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
+    inputStream.delegate = nil;
+    outputStream.delegate = nil;
+    inputStream = nil;
+    outputStream = nil;
 }
 
 - (void)readFromStream {
@@ -106,21 +150,23 @@ static NSString *const WSSecWebSocketVersionServer = @"Sec-WebSocket-Version-Ser
         dataReceived = [[NSMutableData alloc] init];
     }
     
-    uint8_t buffer[bufferSize];
+    uint8_t buffer[WSBufferSize];
     NSInteger length = 0;
     
-    length = [inputStream read:buffer maxLength:bufferSize];
+    length = [inputStream read:buffer maxLength:WSBufferSize];
     
     if (length > 0) {
         [dataReceived appendBytes:(const void *)buffer length:length];
         bytesRead += length;
+        NSLog(@"bytesRead: %d", bytesRead);
     }
     else {
         NSLog(@"Read error!");
     }
-
-    NSLog(@"bytesRead: %d", bytesRead);
-    NSLog(@"Data received: %@", [[NSString alloc] initWithData:dataReceived encoding:NSUTF8StringEncoding]);
+    
+    if (bytesRead < WSBufferSize) {
+        [self didReceiveData];
+    }
 }
 
 - (void)writeToStream {
@@ -133,7 +179,7 @@ static NSString *const WSSecWebSocketVersionServer = @"Sec-WebSocket-Version-Ser
     
     uint8_t *dataBytes = (uint8_t *)[dataToSend mutableBytes];
     dataBytes += bytesSent;
-    unsigned int length = (dataToSend.length - bytesSent) % bufferSize;
+    unsigned int length = (dataToSend.length - bytesSent) % WSBufferSize;
     uint8_t buffer[length];
     (void)memcpy(buffer, dataBytes, length);
     length = [outputStream write:buffer maxLength:length];
@@ -142,7 +188,7 @@ static NSString *const WSSecWebSocketVersionServer = @"Sec-WebSocket-Version-Ser
         bytesSent += length;
         
         if (bytesSent >= dataToSend.length) {
-            dataToSend = nil;
+            [self didSendData];
         }
     }
     else {
@@ -184,7 +230,7 @@ static NSString *const WSSecWebSocketVersionServer = @"Sec-WebSocket-Version-Ser
             break;
         case NSStreamEventEndEncountered:
             NSLog(@"Closed :%@", aStream);
-            [self closeStream:aStream];
+            [self close];
             break;
         default:
             NSLog(@"Unknown event");
@@ -211,9 +257,85 @@ static NSString *const WSSecWebSocketVersionServer = @"Sec-WebSocket-Version-Ser
                            WSSecWebSocketKey, nonce];
     
     dataToSend = [NSMutableData dataWithData:[handshake dataUsingEncoding:NSUTF8StringEncoding]];
-
+    acceptKey = [self acceptKeyFromNonce:nonce];
+    
     NSLog(@"%@", handshake);
-    NSLog(@"%@", [self acceptKeyFromNonce:nonce]);
+}
+
+- (NSInteger)indexOfHeaderField:(NSString *)headerField inComponents:(NSArray *)components {
+    NSInteger index = 0;
+
+    for (NSString *component in components) {
+        if ([component isEqualToString:[NSString stringWithFormat:@"%@:", headerField]]) {
+            return index;
+        }
+        index++;
+    }
+    
+    return -1;
+}
+
+- (BOOL)isValidHandshake:(NSString *)handshake {
+    NSLog(@"Data received: %@", handshake);
+    
+    NSArray *components = [handshake componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    
+    if (![[components objectAtIndex:1] isEqualToString:WSHTTPCode101]) {
+        return NO;
+    }
+
+    NSInteger upgradeIndex = [self indexOfHeaderField:WSUpgrade inComponents:components];
+    NSInteger connectionIndex = [self indexOfHeaderField:WSConnection inComponents:components];
+    NSInteger acceptIndex = [self indexOfHeaderField:WSSecWebSocketAccept inComponents:components];
+    
+    if (![[[components objectAtIndex:upgradeIndex + 1] lowercaseString] isEqualToString:WSUpgradeValue.lowercaseString]) {
+        return NO;
+    }
+
+    if (![[[components objectAtIndex:connectionIndex + 1] lowercaseString] isEqualToString:WSConnectionValue.lowercaseString]) {
+        return NO;
+    }
+    
+    if (![[components objectAtIndex:acceptIndex + 1] isEqualToString:acceptKey]) {
+        return NO;
+    }
+
+    return YES;
+}
+
+
+#pragma mark - Events
+
+
+- (void)didReceiveResponseForOpeningHandshake {
+    NSData *handshakeData = [datasReceived objectAtIndex:0];
+    [datasReceived removeObjectAtIndex:0];
+    
+    if ([self isValidHandshake:[[NSString alloc] initWithData:handshakeData encoding:NSUTF8StringEncoding]]) {
+        state = WSWebSocketStateOpen;
+        NSLog(@"WebSocket State Open");
+    }
+    else {
+        [self close];
+    }
+}
+
+- (void)didSendData {
+    dataToSend = nil;
+    
+    if (datasToSend.count) {
+        dataToSend = [datasToSend objectAtIndex:0];
+        [datasToSend removeObjectAtIndex:0];
+    }   
+}
+
+- (void)didReceiveData {
+    [datasReceived addObject:dataReceived];
+    dataReceived = nil;
+    
+    if (state == WSWebSocketStateConnencting) {
+        [self didReceiveResponseForOpeningHandshake];
+    }
 }
 
 
@@ -221,36 +343,24 @@ static NSString *const WSSecWebSocketVersionServer = @"Sec-WebSocket-Version-Ser
 
 
 - (void)open {
-    [inputStream open];
-    [outputStream open];
+    state = WSWebSocketStateConnencting;
+    [self initiateConnection];
     [self sendOpeningHandshake];
 }
 
 - (void)close {
-    [self closeStream:inputStream];
-    [self closeStream:outputStream];
+    [self closeConnection];
+    state = WSWebSocketStateClosed;
+    NSLog(@"WebSocket State Closed");
 }
 
 - (void)sendData:(NSData *)data {
-    dataToSend = [NSMutableData dataWithData:data];
+    [datasToSend addObject:[NSMutableData dataWithData:data]];
 }
 
 - (void)sendText:(NSString *)text {
     [self sendData:[text dataUsingEncoding:NSUTF8StringEncoding]];
 }
 
-
-#pragma mark - Object lifecycle
-
-
-- (id)initWithUrl:(NSURL *)url {
-    self = [super init];
-    if (self) {
-        [self analyzeURL:url];
-        serverURL = url;
-        [self initiateConnection];
-    }
-    return self;
-}
 
 @end
