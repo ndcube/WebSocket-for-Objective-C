@@ -12,8 +12,10 @@
 
 @property (assign, nonatomic) NSUInteger fragmentSize;
 
-- (id)initWithUrl:(NSURL *)url;
+- (id)initWithUrl:(NSURL *)url textCallback:(void (^)(NSString *text))textCallback dataCallback:(void (^)(NSData *data))dataCallback;
+
 - (void)open;
+
 - (void)sendData:(NSData *)data;
 - (void)sendText:(NSString *)text;
 

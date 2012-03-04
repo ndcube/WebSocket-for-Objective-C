@@ -70,7 +70,6 @@ typedef enum {
     
     BOOL hasSpaceAvailable;
     
-    NSMutableArray *messagesReceived;
     NSMutableArray *messagesToSend;
 
     NSMutableData *messageConstructed;
@@ -87,26 +86,32 @@ typedef enum {
     BOOL isSendingMessage;
 
     uint8_t mask[WSMaskSize];
+    
+    NSThread *wsThread;
+
+    void (^textCallback)(NSString *text);
+    void (^dataCallback)(NSData *data);
 }
 
 
 @synthesize fragmentSize;
 
+
 #pragma mark - Object lifecycle
 
 
-- (id)initWithUrl:(NSURL *)url {
+- (id)initWithUrl:(NSURL *)url textCallback:(void (^)(NSString *text))aTextCallback dataCallback:(void (^)(NSData *data))aDataCallback {
     self = [super init];
     if (self) {
-        messagesReceived = [[NSMutableArray alloc] init];
         messagesToSend = [[NSMutableArray alloc] init];
         [self analyzeURL:url];
         serverURL = url;
         fragmentSize = NSUIntegerMax;
+        textCallback = aTextCallback;
+        dataCallback = aDataCallback;
     }
     return self;
 }
-
 
 #pragma mark - Helper methods
 
@@ -177,6 +182,32 @@ typedef enum {
     outputStream = nil;
 }
 
+- (void)close {
+    [self closeConnection];
+    state = WSWebSocketStateClosed;
+    NSLog(@"WebSocket State Closed");
+}
+
+
+#pragma mark - Data handling
+
+
+- (void)scheduleMessageToSend {
+    if (state == WSWebSocketStateOpen && !messageProcessed && messagesToSend.count) {
+        id objectToSend = [messagesToSend objectAtIndex:0];
+        [messagesToSend removeObjectAtIndex:0];
+        
+        if ([objectToSend isKindOfClass:[NSString class]]) {
+            messageProcessed = [NSMutableData dataWithData:[objectToSend dataUsingEncoding:NSUTF8StringEncoding]];
+            messageProcessedType = WSWebSocketOpcodeText;
+        }
+        else {
+            messageProcessed = [NSMutableData dataWithData:objectToSend];
+            messageProcessedType = WSWebSocketOpcodeBinary;
+        }
+    }   
+}
+
 - (void)constructMessage {
 
     if (!dataReceived.length) {
@@ -195,10 +226,6 @@ typedef enum {
     uint8_t *dataBytes = (uint8_t *)[dataReceived bytes];
     dataBytes += bytesConstructed;
 
-    for (int i = 0; i < dataReceived.length; i++) {
-        printf("%d ", dataBytes[i]);
-    }
-    
     NSUInteger frameSize = 2;
     uint64_t payloadLength = 0;
     
@@ -209,11 +236,8 @@ typedef enum {
     }
     
     // Determine message type
-    if (isNewMessage && dataBytes[0] & 0x1) {
-        messageConstructedType = WSWebSocketOpcodeText;
-    }
-    else {
-        messageConstructedType = WSWebSocketOpcodeBinary;
+    if (isNewMessage) {
+        messageConstructedType = dataBytes[0] & 0b01111111;
     }
     
     // Determine payload length
@@ -231,23 +255,41 @@ typedef enum {
         payloadLength = CFSwapInt64BigToHost(*payloadLength64);
     }
     
-    // Get payload data
     uint8_t *payloadData = (uint8_t *)(dataBytes + frameSize);
-    [messageConstructed appendBytes:payloadData length:payloadLength];
-    bytesConstructed += (payloadLength + frameSize);
+    
+    // Control frames
+    if (dataBytes[0] & 0b00001000) {
 
-    // In case it was the final fragment
-    if (dataBytes[0] & 0b10000000) {
-        if (messageConstructedType == WSWebSocketOpcodeText) {
-            [messagesReceived addObject:[[NSString alloc] initWithData:messageConstructed encoding:NSUTF8StringEncoding]];
-            NSLog(@"%@", [messagesReceived lastObject]);
+        // Close frame
+        if (dataBytes[0] & 0x8) {
+            uint16_t *code16 = (uint16_t *)payloadData;
+            uint16_t statusCode = CFSwapInt16BigToHost(*code16);
+            payloadData += 2;
+            NSString *controlMessage = [[NSString alloc] initWithBytes:payloadData length:payloadLength - 2 encoding:NSUTF8StringEncoding];
+            [self sendCloseControlFrameWithStatusCode:statusCode message:controlMessage];
         }
-        else {
-            [messagesReceived addObject:messageConstructed];
-        }
-        
-        messageConstructed = nil;
     }
+    // Data frames
+    else {
+
+        // Get payload data
+        [messageConstructed appendBytes:payloadData length:payloadLength];
+        
+        // In case it was the final fragment
+        if (dataBytes[0] & 0b10000000) {
+            
+            if (messageConstructedType == WSWebSocketOpcodeText && textCallback) {
+                textCallback([[NSString alloc] initWithData:messageConstructed encoding:NSUTF8StringEncoding]);
+            }
+            else if (dataCallback) {
+                dataCallback([NSData dataWithData:messageConstructed]);
+            }
+            
+            messageConstructed = nil;
+        }
+    }
+
+    bytesConstructed += (payloadLength + frameSize);
 }
 
 - (void)readFromStream {
@@ -353,7 +395,6 @@ typedef enum {
         opcode = WSWebSocketOpcodeContinuation;
     }
     else {
-        [self generateNewMask];
         isSendingMessage = YES;
     }
 
@@ -375,14 +416,16 @@ typedef enum {
 
     if (payloadLength > 65535) {
         uint64_t *payloadLength64 = (uint64_t *)(buffer + 2);
-        *payloadLength64 = CFSwapInt64BigToHost(payloadLength);
+        *payloadLength64 = CFSwapInt64HostToBig(payloadLength);
         *payloadLength64 = payloadLength;
     }
     else if (payloadLength > 125) {
         uint16_t *payloadLength16 = (uint16_t *)(buffer + 2);
-        *payloadLength16 = CFSwapInt16BigToHost(payloadLength);
+        *payloadLength16 = CFSwapInt16HostToBig(payloadLength);
     }
     
+    [self generateNewMask];
+
     // Store mask key
     uint8_t *mask8 = (uint8_t *)(buffer + frameSize - sizeof(mask));
     (void)memcpy(mask8, mask, sizeof(mask));
@@ -400,10 +443,6 @@ typedef enum {
     [dataToSend appendBytes:buffer length:totalLength];
 
     NSLog(@"Processing message");
-
-    for (int i = 0; i < totalLength; i++) {
-        printf("%d ", buffer[i]);
-    }
 
     bytesProcessed += payloadLength;
     
@@ -549,30 +588,6 @@ typedef enum {
     return YES;
 }
 
-
-#pragma mark - Data handling
-
-
-- (void)scheduleMessageToSend {
-    if (state == WSWebSocketStateOpen && !messageProcessed && messagesToSend.count) {
-        id objectToSend = [messagesToSend objectAtIndex:0];
-        [messagesToSend removeObjectAtIndex:0];
-        
-        if ([objectToSend isKindOfClass:[NSString class]]) {
-            messageProcessed = [NSMutableData dataWithData:[objectToSend dataUsingEncoding:NSUTF8StringEncoding]];
-            messageProcessedType = WSWebSocketOpcodeText;
-        }
-        else {
-            messageProcessed = [NSMutableData dataWithData:objectToSend];
-            messageProcessedType = WSWebSocketOpcodeBinary;
-        }
-    }   
-}
-
-
-#pragma mark - Events
-
-
 - (void)didReceiveResponseForOpeningHandshake {
 
     if ([self isValidHandshake:[[NSString alloc] initWithData:dataReceived encoding:NSUTF8StringEncoding]]) {
@@ -589,35 +604,115 @@ typedef enum {
 }
 
 
-#pragma mark - Public interface
+#pragma mark - Control frames
 
 
-- (void)open {
-    state = WSWebSocketStateConnecting;
+- (void)sendCloseControlFrameWithStatusCode:(uint16_t)code message:(NSString *)message {
+
+    NSData *data = [message dataUsingEncoding:NSUTF8StringEncoding];
+
+    state = WSWebSocketStateClosing;
+
+    uint8_t length = (code) ? 2 + data.length : 0;
+    uint8_t frameSize = 6;
+    
+    uint8_t buffer[frameSize + length];
+    buffer[0] = 0b10000000 | 0x8;
+    buffer[1] = 0b10000000 | (length);
+
+    [self generateNewMask];
+    
+    // Store mask key
+    uint8_t *mask8 = (uint8_t *)(buffer + frameSize - sizeof(mask));
+    (void)memcpy(mask8, mask, sizeof(mask));
+        
+    // Store the payload data
+    if (length) {
+        uint8_t *payloadData = (uint8_t *)(buffer + frameSize);
+        uint16_t *code16 = (uint16_t *)payloadData;
+        *code16 = CFSwapInt16HostToBig(code);
+        
+        if (data.length) {
+            payloadData += 2;
+            (void)memcpy(payloadData, data.bytes, data.length);
+            payloadData -= 2;
+        }
+
+        // Mask the payload data
+        for (int i = 0; i < length; i++) {
+            payloadData[i] ^= mask[i % 4];
+        }
+    }
+    
+    [dataToSend appendBytes:buffer length:length + frameSize];
+
+    NSLog(@"Closing frame status code: %d - Message: %@", code, message);
+}
+
+
+#pragma mark - Thread
+
+
+- (void)webSocketThreadLoop {
+
+    @autoreleasepool {
+        NSRunLoop *wsRunLoop = [NSRunLoop currentRunLoop];
+        
+        while (state != WSWebSocketStateClosed) {
+            [wsRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1]];
+            [NSThread sleepForTimeInterval:0.1];
+        }
+    }
+}
+
+
+#pragma mark - Threaded methods
+
+
+- (void)threadedOpen {
     [self initiateConnection];
     [self sendOpeningHandshake];
 }
 
-- (void)close {
-    [self closeConnection];
-    state = WSWebSocketStateClosed;
-    NSLog(@"WebSocket State Closed");
+- (void)threadedSendData:(NSData *)data {
+    [messagesToSend addObject:data];
+    
+    if (hasSpaceAvailable) {
+        [self writeToStream];
+    }
+}
+
+- (void)threadedSendText:(NSString *)text {
+    [messagesToSend addObject:text];
+    
+    if (hasSpaceAvailable) {
+        [self writeToStream];
+    }
+}
+
+
+#pragma mark - Public interface
+
+
+- (void)open {
+    
+    if (state != WSWebSocketStateNone) {
+        return;
+    }
+    
+    state = WSWebSocketStateConnecting;
+    
+    wsThread = [[NSThread alloc] initWithTarget:self selector:@selector(webSocketThreadLoop) object:nil];
+    [wsThread start];
+    [self performSelector:@selector(threadedOpen) onThread:wsThread withObject:nil waitUntilDone:NO];
 }
 
 - (void)sendData:(NSData *)data {
-    [messagesToSend addObject:data];
-
-    if (hasSpaceAvailable) {
-        [self writeToStream];
-    }
+    [self performSelector:@selector(threadedSendData:) onThread:wsThread withObject:data waitUntilDone:NO];
 }
 
 - (void)sendText:(NSString *)text {
-    [messagesToSend addObject:text];
-
-    if (hasSpaceAvailable) {
-        [self writeToStream];
-    }
+    [self performSelector:@selector(threadedSendText:) onThread:wsThread withObject:text waitUntilDone:NO];
 }
 
 
