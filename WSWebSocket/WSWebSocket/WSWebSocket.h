@@ -10,9 +10,10 @@
 
 @interface WSWebSocket : NSObject <NSStreamDelegate>
 
+@property (assign, nonatomic) NSUInteger fragmentSize;
+
 - (id)initWithUrl:(NSURL *)url;
 - (void)open;
-- (void)close;
 - (void)sendData:(NSData *)data;
 - (void)sendText:(NSString *)text;
 
