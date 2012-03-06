@@ -18,5 +18,6 @@
 
 - (void)sendData:(NSData *)data;
 - (void)sendText:(NSString *)text;
+- (void)sendPingWithText:(NSString *)text;
 
 @end

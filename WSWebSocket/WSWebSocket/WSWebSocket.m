@@ -113,6 +113,7 @@ typedef enum {
     return self;
 }
 
+
 #pragma mark - Helper methods
 
 
@@ -172,6 +173,7 @@ typedef enum {
 }
 
 - (void)closeConnection {
+    state = WSWebSocketStateClosed;
     [inputStream close];
     [outputStream close];
     [inputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
@@ -180,29 +182,20 @@ typedef enum {
     outputStream.delegate = nil;
     inputStream = nil;
     outputStream = nil;
-}
-
-- (void)close {
-    [self closeConnection];
-    state = WSWebSocketStateClosed;
     NSLog(@"WebSocket State Closed");
 }
 
 
 #pragma mark - Receive data
 
-
-- (void)constructMessage {
+- (BOOL)constructMessage {
 
     if (!dataReceived.length) {
-        return;
+        return NO;
     }
-    
-    BOOL isNewMessage = NO;
     
     if (!messageConstructed) {
         messageConstructed = [[NSMutableData alloc] init];
-        isNewMessage = YES;
     }
 
     NSLog(@"Constructing message");
@@ -215,13 +208,15 @@ typedef enum {
     
     // Mask bit must be clear
     if (dataBytes[1] & 0b10000000) {
-        [self close];
-        return;
+        [self sendCloseControlFrameWithStatusCode:0 message:nil];
+        return NO;
     }
-    
+
+    uint8_t opcode = dataBytes[0] & 0b01111111; 
+
     // Determine message type
-    if (isNewMessage) {
-        messageConstructedType = dataBytes[0] & 0b01111111;
+    if (opcode == WSWebSocketOpcodeText || opcode == WSWebSocketOpcodeBinary) {
+        messageConstructedType = opcode;
     }
     
     // Determine payload length
@@ -239,18 +234,40 @@ typedef enum {
         payloadLength = CFSwapInt64BigToHost(*payloadLength64);
     }
     
+    // Frame is not received fully
+    if (payloadLength > dataReceived.length - bytesConstructed) {
+        NSLog(@"Frame is not received fully");
+        return NO;
+    }
+    
     uint8_t *payloadData = (uint8_t *)(dataBytes + frameSize);
     
     // Control frames
     if (dataBytes[0] & 0b00001000) {
-
+        
         // Close frame
-        if (dataBytes[0] & 0x8) {
+        if (opcode == WSWebSocketOpcodeClose) {
             uint16_t *code16 = (uint16_t *)payloadData;
             uint16_t statusCode = CFSwapInt16BigToHost(*code16);
             payloadData += 2;
             NSString *controlMessage = [[NSString alloc] initWithBytes:payloadData length:payloadLength - 2 encoding:NSUTF8StringEncoding];
-            [self sendCloseControlFrameWithStatusCode:statusCode message:controlMessage];
+            
+            if (state == WSWebSocketStateOpen) {
+                [self sendCloseControlFrameWithStatusCode:statusCode message:controlMessage];
+            }
+            else {
+                [self closeConnection];
+            }
+        }
+        // Ping frame
+        if (opcode == WSWebSocketOpcodePing) {
+            NSString *controlMessage = [[NSString alloc] initWithBytes:payloadData length:payloadLength encoding:NSUTF8StringEncoding];
+            [self sendPongControlFrameWithText:controlMessage];
+        }
+        // Pong frame
+        if (opcode == WSWebSocketOpcodePong) {
+            NSString *controlMessage = [[NSString alloc] initWithBytes:payloadData length:payloadLength encoding:NSUTF8StringEncoding];
+            NSLog(@"Pong: %@", controlMessage);
         }
     }
     // Data frames
@@ -274,6 +291,8 @@ typedef enum {
     }
 
     bytesConstructed += (payloadLength + frameSize);
+    
+    return YES;
 }
 
 - (void)readFromStream {
@@ -301,8 +320,15 @@ typedef enum {
         NSLog(@"Read error!");
     }
     
-    if (state == WSWebSocketStateOpen) {
-        [self constructMessage];
+    if (state == WSWebSocketStateOpen || state == WSWebSocketStateClosing) {
+        
+        while (bytesConstructed != dataReceived.length && [self constructMessage]) {
+        }
+        
+        if (bytesConstructed == dataReceived.length) {
+            dataReceived = nil;
+            bytesConstructed = 0;
+        }
     }
     else if (state == WSWebSocketStateConnecting) {
         
@@ -324,12 +350,7 @@ typedef enum {
                 break;
             }
         }
-    }
-    
-    if (bytesConstructed == dataReceived.length) {
-        dataReceived = nil;
-        bytesConstructed = 0;
-    }
+    }    
 }
 
 
@@ -510,15 +531,18 @@ typedef enum {
         return;
     }
 
-    if (state == WSWebSocketStateOpen) {
+    if (state == WSWebSocketStateOpen || state == WSWebSocketStateClosing) {
 
-        [self scheduleNextMessage];
-        [self processMessage];
+        if (state == WSWebSocketStateOpen) {
+            [self scheduleNextMessage];
+            [self processMessage];
+        }
         [self scheduleNextFrame];
     }
     
     [self writeToStream];
 }
+
 
 #pragma mark - Control frames
 
@@ -547,6 +571,15 @@ typedef enum {
     NSLog(@"Closing frame status code: %d - Message: %@", code, message);
 }
 
+- (void)sendPingControlFrameWithText:(NSString *)text {
+    NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding];
+    [self sendFrameWithType:WSWebSocketOpcodePing data:data];
+}
+
+- (void)sendPongControlFrameWithText:(NSString *)text {
+    NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding];
+    [self sendFrameWithType:WSWebSocketOpcodePong data:data];
+}
 
 #pragma mark - NSStreamDelegate
 
@@ -583,7 +616,7 @@ typedef enum {
             break;
         case NSStreamEventEndEncountered:
             NSLog(@"Closed :%@", aStream);
-            [self close];
+            [self closeConnection];
             break;
         default:
             NSLog(@"Unknown event");
@@ -661,7 +694,7 @@ typedef enum {
         [self sendData];
     }
     else {
-        [self close];
+        [self closeConnection];
     }
 }
 
@@ -725,5 +758,8 @@ typedef enum {
     [self performSelector:@selector(threadedSendText:) onThread:wsThread withObject:text waitUntilDone:NO];
 }
 
+- (void)sendPingWithText:(NSString *)text {
+    [self performSelector:@selector(sendPingControlFrameWithText:) onThread:wsThread withObject:text waitUntilDone:NO];
+}
 
 @end
