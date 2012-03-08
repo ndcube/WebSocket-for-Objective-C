@@ -106,6 +106,12 @@ typedef enum {
 
 @synthesize fragmentSize;
 
+- (void)setFragmentSize:(NSUInteger)aFragmentSize {
+    if (fragmentSize < 131) {
+        fragmentSize = 131;
+    }
+}
+
 
 #pragma mark - Object lifecycle
 

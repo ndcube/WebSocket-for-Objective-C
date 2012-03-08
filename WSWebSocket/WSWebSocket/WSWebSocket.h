@@ -10,6 +10,7 @@
 
 @interface WSWebSocket : NSObject <NSStreamDelegate>
 
+// Min fragment size is 131
 @property (assign, nonatomic) NSUInteger fragmentSize;
 
 - (id)initWithUrl:(NSURL *)url;
