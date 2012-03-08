@@ -175,7 +175,6 @@ typedef enum {
 }
 
 - (void)closeConnection {
-    state = WSWebSocketStateClosed;
     [inputStream close];
     [outputStream close];
     [inputStream removeFromRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode];
@@ -184,6 +183,7 @@ typedef enum {
     outputStream.delegate = nil;
     inputStream = nil;
     outputStream = nil;
+    state = WSWebSocketStateClosed;
     NSLog(@"WebSocket State Closed");
 }
 
@@ -241,7 +241,7 @@ typedef enum {
     }
     
     // Frame is not received fully
-    if (payloadLength > dataReceived.length - bytesConstructed) {
+    if (payloadLength + frameSize > dataReceived.length - bytesConstructed) {
 //        NSLog(@"Frame is not received fully");
         return NO;
     }
@@ -249,7 +249,7 @@ typedef enum {
     uint8_t *payloadData = (uint8_t *)(dataBytes + frameSize);
     
     // Control frames
-    if (dataBytes[0] & 0b00001000) {
+    if (opcode & 0b00001000) {
         
         // Maximum payload length is 125
         if (payloadLength > 125) {
@@ -418,49 +418,48 @@ typedef enum {
         opcode |= 0b10000000;
     }
     
-    uint8_t buffer[totalLength];
+    NSMutableData *payloadData = [[NSMutableData alloc] initWithLength:totalLength];
+    
+    uint8_t *payloadDataBytes = (uint8_t *)(payloadData.mutableBytes);
     
     // Store the opcode
-    buffer[0] = opcode;
+    payloadDataBytes[0] = opcode;
     
     // Set the mask bit
     maskBitAndPayloadLength |= 0b10000000;
     
     // Store mask bit and payload length
-    buffer[1] = maskBitAndPayloadLength;
+    payloadDataBytes[1] = maskBitAndPayloadLength;
     
     if (payloadLength > 65535) {
-        uint64_t *payloadLength64 = (uint64_t *)(buffer + 2);
+        uint64_t *payloadLength64 = (uint64_t *)(payloadDataBytes + 2);
         *payloadLength64 = CFSwapInt64HostToBig(payloadLength);
     }
     else if (payloadLength > 125) {
-        uint16_t *payloadLength16 = (uint16_t *)(buffer + 2);
+        uint16_t *payloadLength16 = (uint16_t *)(payloadDataBytes + 2);
         *payloadLength16 = CFSwapInt16HostToBig(payloadLength);
     }
     
     [self generateNewMask];
     
     // Store mask key
-    uint8_t *mask8 = (uint8_t *)(buffer + frameSize - sizeof(mask));
+    uint8_t *mask8 = (uint8_t *)(payloadDataBytes + frameSize - sizeof(mask));
     (void)memcpy(mask8, mask, sizeof(mask));
     
     // Store the payload data
-    uint8_t *payloadData = (uint8_t *)(buffer + frameSize);
-    (void)memcpy(payloadData, data.bytes, payloadLength);
+    payloadDataBytes += frameSize;
+    (void)memcpy(payloadDataBytes, data.bytes, payloadLength);
     
     // Mask the payload data
     for (int i = 0; i < payloadLength; i++) {
-        payloadData[i] ^= mask[i % 4];
+        payloadDataBytes[i] ^= mask[i % 4];
     }
 
-    NSData *frame = [NSData dataWithBytes:buffer length:totalLength];
-    
-    // Control frames
-    if (buffer[0] & 0b00001000) {
-        [controlFramesToSend addObject:frame];
+    if (opcode & 0b00001000) {
+        [controlFramesToSend addObject:payloadData];
     }
     else {
-        [messageFramesToSend addObject:frame];
+        [messageFramesToSend addObject:payloadData];
     }
 
     return payloadLength;
@@ -504,14 +503,11 @@ typedef enum {
 
     hasSpaceAvailable = NO;
     length = [outputStream write:dataBytes maxLength:length];
-
-//    NSLog(@"Sent: %llu", length);
     
     if (length > 0) {
         bytesSent += length;
 
         if (bytesSent == dataToSend.length) {
-//            NSLog(@"All sent");
             bytesSent = 0;
             dataToSend = nil;
         }
@@ -735,7 +731,6 @@ typedef enum {
     @autoreleasepool {
         while (state != WSWebSocketStateClosed) {
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, 4.0, NO);
-//            [NSThread sleepForTimeInterval:0.2];
         }
     }
 }
