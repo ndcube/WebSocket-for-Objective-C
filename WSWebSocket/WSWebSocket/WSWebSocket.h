@@ -13,16 +13,17 @@
 // Min fragment size is 131
 @property (assign, nonatomic) NSUInteger fragmentSize;
 
-- (id)initWithUrl:(NSURL *)url;
+- (id)initWithURL:(NSURL *)url;
 - (void)open;
+- (void)close;
 
 - (void)sendData:(NSData *)data;
 - (void)sendText:(NSString *)text;
-- (void)sendPingWithText:(NSString *)text;
+- (void)sendPingWithData:(NSData *)data;
 
 - (void)setDataCallback:(void (^)(NSData *data))dataCallback;
 - (void)setTextCallback:(void (^)(NSString *text))textCallback;
-- (void)setPingCallback:(void (^)(void))pingCallback;
-- (void)setCloseCallback:(void (^)(void))closeCallback;
+- (void)setPongCallback:(void (^)(void))pongCallback;
+- (void)setCloseCallback:(void (^)(NSUInteger statusCode, NSString *message))closeCallback;
 
 @end
