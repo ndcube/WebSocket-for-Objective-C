@@ -7,6 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		3A2B00EE151B09C400C6308E /* WSFrame.h in Headers */ = {isa = PBXBuildFile; fileRef = 3A2B00EC151B09C400C6308E /* WSFrame.h */; };
+		3A2B00EF151B09C400C6308E /* WSFrame.m in Sources */ = {isa = PBXBuildFile; fileRef = 3A2B00ED151B09C400C6308E /* WSFrame.m */; };
+		3A2B00F1151B0A0000C6308E /* WSWebSocket.h in Headers */ = {isa = PBXBuildFile; fileRef = 3ABBCD9F14E1B4A300B24E95 /* WSWebSocket.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		3A6C6F80151BA21000848854 /* WSMessage.h in Headers */ = {isa = PBXBuildFile; fileRef = 3A6C6F7E151BA21000848854 /* WSMessage.h */; };
+		3A6C6F81151BA21000848854 /* WSMessage.m in Sources */ = {isa = PBXBuildFile; fileRef = 3A6C6F7F151BA21000848854 /* WSMessage.m */; };
+		3A6C6F85151BACF600848854 /* WSMessageProcessor.h in Headers */ = {isa = PBXBuildFile; fileRef = 3A6C6F83151BACF500848854 /* WSMessageProcessor.h */; };
+		3A6C6F86151BACF600848854 /* WSMessageProcessor.m in Sources */ = {isa = PBXBuildFile; fileRef = 3A6C6F84151BACF600848854 /* WSMessageProcessor.m */; };
 		3ABBCD9B14E1B4A300B24E95 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3ABBCD9A14E1B4A300B24E95 /* Foundation.framework */; };
 		3ABBCDA114E1B4A300B24E95 /* WSWebSocket.m in Sources */ = {isa = PBXBuildFile; fileRef = 3ABBCDA014E1B4A300B24E95 /* WSWebSocket.m */; };
 		3AEBB38B14FEBE9F006CE52E /* NSString+Base64.h in Headers */ = {isa = PBXBuildFile; fileRef = 3AEBB38914FEBE9F006CE52E /* NSString+Base64.h */; };
@@ -14,6 +21,12 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		3A2B00EC151B09C400C6308E /* WSFrame.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WSFrame.h; sourceTree = "<group>"; };
+		3A2B00ED151B09C400C6308E /* WSFrame.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WSFrame.m; sourceTree = "<group>"; };
+		3A6C6F7E151BA21000848854 /* WSMessage.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WSMessage.h; sourceTree = "<group>"; };
+		3A6C6F7F151BA21000848854 /* WSMessage.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WSMessage.m; sourceTree = "<group>"; };
+		3A6C6F83151BACF500848854 /* WSMessageProcessor.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = WSMessageProcessor.h; sourceTree = "<group>"; };
+		3A6C6F84151BACF600848854 /* WSMessageProcessor.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = WSMessageProcessor.m; sourceTree = "<group>"; };
 		3ABBCD9714E1B4A300B24E95 /* libWSWebSocket.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libWSWebSocket.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		3ABBCD9A14E1B4A300B24E95 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		3ABBCD9E14E1B4A300B24E95 /* WSWebSocket-Prefix.pch */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "WSWebSocket-Prefix.pch"; sourceTree = "<group>"; };
@@ -65,6 +78,12 @@
 			children = (
 				3AEBB38914FEBE9F006CE52E /* NSString+Base64.h */,
 				3AEBB38A14FEBE9F006CE52E /* NSString+Base64.m */,
+				3A2B00EC151B09C400C6308E /* WSFrame.h */,
+				3A2B00ED151B09C400C6308E /* WSFrame.m */,
+				3A6C6F7E151BA21000848854 /* WSMessage.h */,
+				3A6C6F7F151BA21000848854 /* WSMessage.m */,
+				3A6C6F83151BACF500848854 /* WSMessageProcessor.h */,
+				3A6C6F84151BACF600848854 /* WSMessageProcessor.m */,
 				3ABBCD9F14E1B4A300B24E95 /* WSWebSocket.h */,
 				3ABBCDA014E1B4A300B24E95 /* WSWebSocket.m */,
 				3ABBCD9D14E1B4A300B24E95 /* Supporting Files */,
@@ -88,6 +107,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				3AEBB38B14FEBE9F006CE52E /* NSString+Base64.h in Headers */,
+				3A2B00EE151B09C400C6308E /* WSFrame.h in Headers */,
+				3A2B00F1151B0A0000C6308E /* WSWebSocket.h in Headers */,
+				3A6C6F80151BA21000848854 /* WSMessage.h in Headers */,
+				3A6C6F85151BACF600848854 /* WSMessageProcessor.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -143,6 +166,9 @@
 			files = (
 				3ABBCDA114E1B4A300B24E95 /* WSWebSocket.m in Sources */,
 				3AEBB38C14FEBE9F006CE52E /* NSString+Base64.m in Sources */,
+				3A2B00EF151B09C400C6308E /* WSFrame.m in Sources */,
+				3A6C6F81151BA21000848854 /* WSMessage.m in Sources */,
+				3A6C6F86151BACF600848854 /* WSMessageProcessor.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

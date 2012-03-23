@@ -11,10 +11,12 @@
 #import <Security/Security.h>
 
 #import "NSString+Base64.h"
+#import "WSFrame.h"
+#import "WSMessage.h"
+#import "WSMessageProcessor.h"
 
 
 static const NSUInteger WSNonceSize = 16;
-static const NSUInteger WSMaskSize = 4;
 static const NSUInteger WSPort = 80;
 static const NSUInteger WSPortSecure = 443;
 static NSString *const WSAcceptGUID = @"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -49,70 +51,44 @@ typedef enum {
     WSWebSocketStateClosed = 4
 }WSWebSocketStateType;
 
-typedef enum {
-    WSWebSocketOpcodeContinuation = 0,
-    WSWebSocketOpcodeText = 1,
-    WSWebSocketOpcodeBinary = 2,
-    WSWebSocketOpcodeClose = 8,
-    WSWebSocketOpcodePing = 9,
-    WSWebSocketOpcodePong = 10
-}WSWebSocketOpcodeType;
-
-typedef enum {
-    WSWebSocketMessageText = WSWebSocketOpcodeText,
-    WSWebSocketMessageBinary = WSWebSocketOpcodeBinary,
-}WSWebSocketMessageType;
-
 
 @implementation WSWebSocket {
-    NSURL *serverURL;
     NSInputStream *inputStream;
     NSOutputStream *outputStream;
+    BOOL hasSpaceAvailable;
     
     NSMutableData *dataReceived;
     NSData *dataToSend;
     NSInteger bytesSent;
-    
-    BOOL hasSpaceAvailable;
-    
-    NSMutableArray *messagesToSend;
-    NSMutableArray *messageFramesToSend;
-    NSMutableArray *controlFramesToSend;
-
-    NSMutableData *messageConstructed;
-    NSMutableData *messageProcessed;
-    NSInteger bytesConstructed;
-    NSInteger bytesProcessed;
 
     WSWebSocketStateType state;
     NSString *acceptKey;
-    
-    WSWebSocketMessageType messageProcessedType;
-    WSWebSocketMessageType messageConstructedType;
-    BOOL isNewMessage;
 
-    uint8_t mask[WSMaskSize];
-    
     NSThread *wsThread;
-    
     dispatch_queue_t callbackQueue;
-
     void (^dataCallback)(NSData *data);
     void (^textCallback)(NSString *text);
     void (^pongCallback)(void);
     void (^closeCallback)(NSUInteger statusCode, NSString *message);
-    
+
+    WSMessageProcessor *messageProcessor;    
+    WSFrame *currentFrame;
     uint16_t statusCode;
     NSString *closingReason;
 }
 
 
 @synthesize fragmentSize;
+@synthesize hostURL;
 
 - (void)setFragmentSize:(NSUInteger)aFragmentSize {
+    fragmentSize = aFragmentSize;
+    
     if (fragmentSize < 131) {
         fragmentSize = 131;
     }
+
+    messageProcessor.fragmentSize = fragmentSize;
 }
 
 
@@ -123,11 +99,9 @@ typedef enum {
     self = [super init];
     if (self) {
         [self analyzeURL:url];
-        messagesToSend = [[NSMutableArray alloc] init];
-        messageFramesToSend = [[NSMutableArray alloc] init];
-        controlFramesToSend = [[NSMutableArray alloc] init];
-        serverURL = url;
-        fragmentSize = NSUIntegerMax;
+        hostURL = url;
+        messageProcessor = [[WSMessageProcessor alloc] init];
+        self.fragmentSize = NSUIntegerMax;
         callbackQueue = dispatch_queue_create("WebSocket callback queue", DISPATCH_QUEUE_SERIAL);
     }
     return self;
@@ -185,10 +159,6 @@ typedef enum {
     return [NSString encodeBase64WithData:[self SHA1DigestOfString:[nonce stringByAppendingString:WSAcceptGUID]]];    
 }
 
-- (void)generateNewMask {
-    SecRandomCopyBytes(kSecRandomDefault, WSMaskSize, mask);
-}
-
 
 #pragma mark - Data stream
 
@@ -196,14 +166,14 @@ typedef enum {
 - (void)initiateConnection {
     CFReadStreamRef readStream;
     CFWriteStreamRef writeStream;
-    NSUInteger port = (serverURL.port) ? serverURL.port.integerValue : ([serverURL.scheme.lowercaseString isEqualToString:WSScheme.lowercaseString]) ? WSPort : WSPortSecure;
+    NSUInteger port = (hostURL.port) ? hostURL.port.integerValue : ([hostURL.scheme.lowercaseString isEqualToString:WSScheme.lowercaseString]) ? WSPort : WSPortSecure;
     
-    CFStreamCreatePairWithSocketToHost(NULL, (__bridge CFStringRef)serverURL.host, port, &readStream, &writeStream);
+    CFStreamCreatePairWithSocketToHost(NULL, (__bridge CFStringRef)hostURL.host, port, &readStream, &writeStream);
 
     inputStream = (__bridge_transfer NSInputStream *)readStream;
     outputStream = (__bridge_transfer NSOutputStream *)writeStream;
 
-    if ([serverURL.scheme isEqualToString:WSSchemeSecure]) {
+    if ([hostURL.scheme isEqualToString:WSSchemeSecure]) {
         [inputStream setProperty:NSStreamSocketSecurityLevelTLSv1 forKey:NSStreamSocketSecurityLevelKey];
         [outputStream setProperty:NSStreamSocketSecurityLevelTLSv1 forKey:NSStreamSocketSecurityLevelKey];
     }
@@ -237,170 +207,54 @@ typedef enum {
 
 #pragma mark - Receive data
 
+
 - (BOOL)constructMessage {
 
     if (!dataReceived.length) {
         return NO;
     }
     
-    if (!messageConstructed) {
-        messageConstructed = [[NSMutableData alloc] init];
-        isNewMessage = YES;
-    }
-    
-    uint8_t *dataBytes = (uint8_t *)[dataReceived bytes];
-    dataBytes += bytesConstructed;
-
-    NSUInteger frameSize = 2;
-    uint64_t payloadLength = 0;
-    
-    // Mask bit must be clear
-    if (dataBytes[1] & 0b10000000) {
-        [self sendCloseControlFrameWithStatusCode:1002 message:nil];
-        return NO;
-    }
-
-    uint8_t opcode = dataBytes[0] & 0b01111111; 
-
-    // Continuation frame received first
-    if (isNewMessage && opcode == WSWebSocketOpcodeContinuation) {
-        [self sendCloseControlFrameWithStatusCode:1002 message:nil];
-        return NO;
-    }
-
-    // Opcode should not be a reserved code
-    if (opcode != WSWebSocketOpcodeContinuation && opcode != WSWebSocketOpcodeText && opcode != WSWebSocketOpcodeBinary && opcode != WSWebSocketOpcodeClose && opcode != WSWebSocketOpcodePing && opcode != WSWebSocketOpcodePong ) {
-        [self sendCloseControlFrameWithStatusCode:1002 message:nil];
-        return NO;
-    }
-    
-    // Determine message type
-    if (opcode == WSWebSocketOpcodeText || opcode == WSWebSocketOpcodeBinary) {
-
-        // Opcode should be continuation
-        if (!isNewMessage) {
-            [self sendCloseControlFrameWithStatusCode:1002 message:nil];
-            return NO;
-        }
+    NSUInteger bytesConstructed = messageProcessor.bytesConstructed;
+    WSMessage *message = [messageProcessor constructMessageFromData:dataReceived];
         
-        messageConstructedType = opcode;
-    }
-
-    // Determine payload length
-    if (dataBytes[1] < 126) {
-        payloadLength = dataBytes[1];
-    }
-    else if (dataBytes[1] == 126) {
-        frameSize += 2;
-        uint16_t *payloadLength16 = (uint16_t *)(dataBytes + 2);
-        payloadLength = CFSwapInt16BigToHost(*payloadLength16);
-    }
-    else {
-        frameSize += 8;
-        uint64_t *payloadLength64 = (uint64_t *)(dataBytes + 2);
-        payloadLength = CFSwapInt64BigToHost(*payloadLength64);
+    // Close frame
+    if (message.opcode == WSWebSocketOpcodeClose) {
+        [self sendCloseControlFrameWithStatusCode:message.statusCode text:message.text];
     }
     
-    // Frame is not received fully
-    if (payloadLength + frameSize > dataReceived.length - bytesConstructed) {
-        return NO;
+    // Ping frame
+    if (message.opcode == WSWebSocketOpcodePing) {
+        WSFrame *frame = [[WSFrame alloc] initWithOpcode:WSWebSocketOpcodePong data:message.data maxSize:fragmentSize];
+        [messageProcessor queueFrame:frame];
+        [self sendData];
     }
     
-    uint8_t *payloadData = (uint8_t *)(dataBytes + frameSize);
+    // Pong frame
+    if (message.opcode == WSWebSocketOpcodePong && pongCallback) {
+        dispatch_async(callbackQueue, ^{
+            pongCallback();
+        });
+    }
     
-    // Control frames
-    if (opcode & 0b00001000) {
+    // Text message
+    if (message.opcode == WSWebSocketOpcodeText && textCallback) {
         
-        // Maximum payload length is 125
-        if (payloadLength > 125) {
-            [self sendCloseControlFrameWithStatusCode:1002 message:nil];
-            return NO;
-        }
-
-        // Fin bit must be set
-        if (~dataBytes[0] & 0b10000000) {
-            [self sendCloseControlFrameWithStatusCode:1002 message:nil];
-            return NO;
-        }
-
-        // Close frame
-        if (opcode == WSWebSocketOpcodeClose) {
-            uint16_t code = 0;
-            NSString *controlMessage;
-            
-            if (payloadLength) {
-                
-                // Status code must be 2 byte long
-                if (payloadLength == 1) {
-                    code = 1002;
-                }
-                else {
-                    uint16_t *code16 = (uint16_t *)payloadData;
-                    code = CFSwapInt16BigToHost(*code16);
-                    payloadData += 2;
-                    controlMessage = [[NSString alloc] initWithBytes:payloadData length:payloadLength - 2 encoding:NSUTF8StringEncoding];
-                    
-                    // Invalid UTF8 message
-                    if (!controlMessage && payloadLength > 2) {
-                        code = 1007;
-                    }
-                }
-            }
-            
-            [self sendCloseControlFrameWithStatusCode:code message:controlMessage];
-        }
-        // Ping frame
-        if (opcode == WSWebSocketOpcodePing) {
-            [self sendFrameWithType:WSWebSocketOpcodePong data:[NSData dataWithBytes:payloadData length:payloadLength]];
-            [self sendData];
-        }
-        // Pong frame
-        if (opcode == WSWebSocketOpcodePong) {
-            if (pongCallback) {
-                dispatch_async(callbackQueue, ^{
-                    pongCallback();
-                });
-            }
-        }
+        // Execute the callback block with the constructed message.
+        dispatch_async(callbackQueue, ^{
+            textCallback(message.text);
+        });
     }
-    // Data frames
-    else {
-
-        // Get payload data
-        [messageConstructed appendBytes:payloadData length:payloadLength];
-        isNewMessage = NO;
-        
-        // In case it was the final fragment
-        if (dataBytes[0] & 0b10000000) {
-            
-            if (messageConstructedType == WSWebSocketMessageText && textCallback) {
-                NSString *callbackText = [[NSString alloc] initWithData:messageConstructed encoding:NSUTF8StringEncoding];
-                
-                // Invalid UTF8 message
-                if (!callbackText && messageConstructed.length) {
-                    [self sendCloseControlFrameWithStatusCode:1007 message:nil];
-                    return NO;
-                }
-                
-                dispatch_async(callbackQueue, ^{
-                    textCallback(callbackText);
-                });
-            }
-            else if (messageConstructedType == WSWebSocketMessageBinary && dataCallback) {
-                NSData *callbackData = [NSData dataWithData:messageConstructed];
-                
-                dispatch_async(callbackQueue, ^{
-                    dataCallback(callbackData);
-                });
-            }
-            
-            messageConstructed = nil;
-        }
-    }
-
-    bytesConstructed += (payloadLength + frameSize);
     
-    return YES;
+    // Binary message
+    else if (message.opcode == WSWebSocketOpcodeBinary && dataCallback) {
+
+        // Execute the callback block with the constructed message.
+        dispatch_async(callbackQueue, ^{
+            dataCallback(message.data);
+        });
+    }
+
+    return bytesConstructed != messageProcessor.bytesConstructed;
 }
 
 - (void)readFromStream {
@@ -411,6 +265,7 @@ typedef enum {
     
     NSUInteger bufferSize = fragmentSize;
     
+    // Use a reasonable buffer size
     if (fragmentSize == NSUIntegerMax) {
         bufferSize = 4096;
     }
@@ -418,8 +273,10 @@ typedef enum {
     uint8_t buffer[bufferSize];
     NSInteger length = bufferSize;
 
+    // Read from the stream
     length = [inputStream read:buffer maxLength:bufferSize];
 
+    // Append the bytes read from the stream
     if (length > 0) {
         [dataReceived appendBytes:(const void *)buffer length:length];
     }
@@ -438,9 +295,11 @@ typedef enum {
                 
                 [self didReceiveOpeningHandshakeWithData:handshake];
                 
+                // Remove the processed handshake data
                 if (dataReceived.length == i + 4) {
                     dataReceived = nil;
                 }
+                // The remaining bytes are preserved
                 else {
                     dataBytes += (i + 4);
                     dataReceived = [[NSMutableData alloc] initWithBytes:dataBytes length:dataReceived.length - (i + 4)];
@@ -452,12 +311,13 @@ typedef enum {
 
     if (state == WSWebSocketStateOpen || state == WSWebSocketStateClosing) {
         
-        while (bytesConstructed != dataReceived.length && [self constructMessage]) {
+        // Process all the received data or until a partial received fragment is found
+        while (messageProcessor.bytesConstructed != dataReceived.length && [self constructMessage]) {
         }
         
-        if (bytesConstructed == dataReceived.length) {
+        if (messageProcessor.bytesConstructed == dataReceived.length) {
             dataReceived = nil;
-            bytesConstructed = 0;
+            messageProcessor.bytesConstructed = 0;
         }
     }
 }
@@ -466,189 +326,7 @@ typedef enum {
 #pragma mark - Send data
 
 
-// Sends a frame of the given data
-// Returns the length of the payload data
-- (uint64_t)sendFrameWithType:(WSWebSocketOpcodeType)type data:(NSData *)data {
-    uint8_t maskBitAndPayloadLength;
-    
-    // default frame size: sizeof(opcode) + sizeof(maskBitAndPayloadLength) + sizeof(mask)
-    NSUInteger frameSize = 6;
-    
-    uint64_t totalLength = MIN((data.length + frameSize), fragmentSize);
-    
-    if (totalLength - frameSize < 126) {
-        maskBitAndPayloadLength = totalLength - frameSize;
-    }
-    else {
-        totalLength = MIN(totalLength + 2, fragmentSize);
-        frameSize += 2;
-        
-        if (totalLength - frameSize < 65536) {
-            maskBitAndPayloadLength = 126;
-        }   
-        else {
-            totalLength = MIN(totalLength + 6, fragmentSize);
-            maskBitAndPayloadLength = 127;
-            frameSize += 6;
-        }
-    }
-    
-    uint64_t payloadLength = totalLength - frameSize;
-    
-    // Set the opcode
-    uint8_t opcode = type;
-        
-    // Set fin bit
-    if (payloadLength == data.length) {
-        opcode |= 0b10000000;
-    }
-    
-    NSMutableData *payloadData = [[NSMutableData alloc] initWithLength:totalLength];
-    
-    uint8_t *payloadDataBytes = (uint8_t *)(payloadData.mutableBytes);
-    
-    // Store the opcode
-    payloadDataBytes[0] = opcode;
-    
-    // Set the mask bit
-    maskBitAndPayloadLength |= 0b10000000;
-    
-    // Store mask bit and payload length
-    payloadDataBytes[1] = maskBitAndPayloadLength;
-    
-    if (payloadLength > 65535) {
-        uint64_t *payloadLength64 = (uint64_t *)(payloadDataBytes + 2);
-        *payloadLength64 = CFSwapInt64HostToBig(payloadLength);
-    }
-    else if (payloadLength > 125) {
-        uint16_t *payloadLength16 = (uint16_t *)(payloadDataBytes + 2);
-        *payloadLength16 = CFSwapInt16HostToBig(payloadLength);
-    }
-    
-    [self generateNewMask];
-    
-    // Store mask key
-    uint8_t *mask8 = (uint8_t *)(payloadDataBytes + frameSize - sizeof(mask));
-    (void)memcpy(mask8, mask, sizeof(mask));
-    
-    // Store the payload data
-    payloadDataBytes += frameSize;
-    (void)memcpy(payloadDataBytes, data.bytes, payloadLength);
-    
-    // Mask the payload data
-    for (int i = 0; i < payloadLength; i++) {
-        payloadDataBytes[i] ^= mask[i % 4];
-    }
-
-    if (opcode & 0b00001000) {
-        [controlFramesToSend addObject:payloadData];
-    }
-    else {
-        [messageFramesToSend addObject:payloadData];
-    }
-
-    return payloadLength;
-}
-
-- (void)processMessage {
-    // If no message to process then return
-    if (!messageProcessed) {
-        return;
-    }
-
-    uint8_t *dataBytes = (uint8_t *)[messageProcessed bytes];
-    dataBytes += bytesProcessed;
-
-    uint8_t opcode = messageProcessedType;
-
-    if (bytesProcessed) {
-        opcode = WSWebSocketOpcodeContinuation;
-    }
-
-    NSData *data =[NSData dataWithBytesNoCopy:dataBytes length:messageProcessed.length - bytesProcessed freeWhenDone:NO];
-
-    uint64_t payloadLength = [self sendFrameWithType:opcode data:data];
-    bytesProcessed += payloadLength;
-    
-    // If all has been sent
-    if (messageProcessed.length == bytesProcessed) {
-        messageProcessed = nil;
-        bytesProcessed = 0;
-    }
-}
-
-- (void)writeToStream {
-    if (!dataToSend) {
-        return;
-    }
-
-    uint8_t *dataBytes = (uint8_t *)[dataToSend bytes];
-    dataBytes += bytesSent;
-    uint64_t length = dataToSend.length - bytesSent;
-
-    hasSpaceAvailable = NO;
-    length = [outputStream write:dataBytes maxLength:length];
-    
-    if (length > 0) {
-        bytesSent += length;
-
-        if (bytesSent == dataToSend.length) {
-            bytesSent = 0;
-            dataToSend = nil;
-        }
-    }
-}
-
-- (void)scheduleNextMessage {
-    if (!messageProcessed && messagesToSend.count) {
-        id objectToSend = [messagesToSend objectAtIndex:0];
-        [messagesToSend removeObjectAtIndex:0];
-        
-        if ([objectToSend isKindOfClass:[NSString class]]) {
-            messageProcessed = [NSMutableData dataWithData:[objectToSend dataUsingEncoding:NSUTF8StringEncoding]];
-            messageProcessedType = WSWebSocketMessageText;
-        }
-        else {
-            messageProcessed = [NSMutableData dataWithData:objectToSend];
-            messageProcessedType = WSWebSocketMessageBinary;
-        }
-    }
-}
-
-- (void)scheduleNextFrame {
-    if (!dataToSend && controlFramesToSend.count) {
-        dataToSend = [controlFramesToSend objectAtIndex:0];
-        [controlFramesToSend removeObjectAtIndex:0];
-    }
-    
-    if (!dataToSend && messageFramesToSend.count) {
-        dataToSend = [messageFramesToSend objectAtIndex:0];
-        [messageFramesToSend removeObjectAtIndex:0];
-    }
-}
-
-- (void)sendData {
-    if (!hasSpaceAvailable) {
-        return;
-    }
-
-    if (state == WSWebSocketStateOpen || state == WSWebSocketStateClosing) {
-
-        if (state == WSWebSocketStateOpen) {
-            [self scheduleNextMessage];
-            [self processMessage];
-        }
-        [self scheduleNextFrame];
-    }
-    
-    [self writeToStream];
-}
-
-
-#pragma mark - Control frames
-
-
-- (void)sendCloseControlFrameWithStatusCode:(uint16_t)code message:(NSString *)message {
+- (void)sendCloseControlFrameWithStatusCode:(uint16_t)code text:(NSString *)text {
     
     if (state != WSWebSocketStateOpen) {
         return;
@@ -656,14 +334,14 @@ typedef enum {
     
     state = WSWebSocketStateClosing;
     
-    NSData *messageData = [message dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *messageData = [text dataUsingEncoding:NSUTF8StringEncoding];
     uint8_t length = (code) ? 2 + messageData.length : 0;
-
+    
     NSData *frameData;
     
     // Create the data from the status code and the message
     if (length) {
-                
+        
         // Invalid status code
         if (code != 1000 && code != 1001 && code != 1002 && code != 1003 && code != 1007 && code != 1008 && code != 1009 && code != 1010 && code != 1011 && code < 3000) {
             code = 1002;
@@ -679,14 +357,61 @@ typedef enum {
         if (messageData.length) {
             payloadData += 2;
             (void)memcpy(payloadData, messageData.bytes, messageData.length);
-            closingReason = message;
+            closingReason = text;
         }
         
         frameData = [NSData dataWithBytes:buffer length:length];
     }
-    
-    [self sendFrameWithType:WSWebSocketOpcodeClose data:frameData];
+
+    WSFrame *frame = [[WSFrame alloc] initWithOpcode:WSWebSocketOpcodeClose data:frameData maxSize:fragmentSize];
+    [messageProcessor queueFrame:frame];
     [self sendData];
+}
+
+- (void)sendData {
+    if (!hasSpaceAvailable) {
+        return;
+    }
+
+    if (state == WSWebSocketStateOpen || state == WSWebSocketStateClosing) {
+
+        if (state == WSWebSocketStateOpen) {
+            [messageProcessor scheduleNextMessage];
+        }
+        
+        [messageProcessor processMessage];
+
+        if (!dataToSend) {
+            currentFrame = [messageProcessor nextFrame];
+            dataToSend = currentFrame.data;
+        }
+    }
+    
+    [self writeToStream];    
+}
+
+- (void)writeToStream {
+    if (!dataToSend) {
+        return;
+    }
+    
+    uint8_t *dataBytes = (uint8_t *)[dataToSend bytes];
+    dataBytes += bytesSent;
+    uint64_t length = dataToSend.length - bytesSent;
+    
+    hasSpaceAvailable = NO;
+    length = [outputStream write:dataBytes maxLength:length];
+    
+    if (length > 0) {
+        bytesSent += length;
+
+        // All data has been sent
+        if (bytesSent == dataToSend.length) {
+            bytesSent = 0;
+            dataToSend = nil;
+            currentFrame = nil;
+        }
+    }
 }
 
 
@@ -726,8 +451,8 @@ typedef enum {
 
 - (void)sendOpeningHandshake {
     NSString *nonce = [self nonce];
-    NSString *pathQuery = (serverURL.query) ? [NSString stringWithFormat:@"%@?%@", serverURL.path, serverURL.query] : serverURL.path.length ? serverURL.path : @"/";
-    NSString *hostPort = (serverURL.port) ? [NSString stringWithFormat:@"%@:%@", serverURL.host, serverURL.port] : serverURL.host;
+    NSString *pathQuery = (hostURL.query) ? [NSString stringWithFormat:@"%@?%@", hostURL.path, hostURL.query] : hostURL.path.length ? hostURL.path : @"/";
+    NSString *hostPort = (hostURL.port) ? [NSString stringWithFormat:@"%@:%@", hostURL.host, hostURL.port] : hostURL.host;
     
     NSString *handshake = [NSString stringWithFormat:
                            @"%@ %@ %@\r\n%@: %@\r\n%@: %@\r\n%@: %@\r\n%@: %@\r\n%@: %@\r\n\r\n",
@@ -738,7 +463,7 @@ typedef enum {
                            WSSecWebSocketVersion, WSVersion,
                            WSSecWebSocketKey, nonce];
     
-    dataToSend = [NSMutableData dataWithData:[handshake dataUsingEncoding:NSUTF8StringEncoding]];
+    dataToSend = [handshake dataUsingEncoding:NSUTF8StringEncoding];
     acceptKey = [self acceptKeyFromNonce:nonce];
 }
 
@@ -782,7 +507,6 @@ typedef enum {
 }
 
 - (void)didReceiveOpeningHandshakeWithData:(NSData *)handshakeData {
-
     if ([self isValidHandshake:[[NSString alloc] initWithData:handshakeData encoding:NSUTF8StringEncoding]]) {
         state = WSWebSocketStateOpen;
         [self sendData];
@@ -797,7 +521,6 @@ typedef enum {
 
 
 - (void)webSocketThreadLoop {
-
     @autoreleasepool {
         while (state != WSWebSocketStateClosed) {
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, 4.0, NO);
@@ -815,22 +538,35 @@ typedef enum {
 }
 
 - (void)threadedClose {
-    [self sendCloseControlFrameWithStatusCode:1000 message:nil];
+    [self sendCloseControlFrameWithStatusCode:1000 text:nil];
 }
 
 - (void)threadedSendData:(NSData *)data {
-    [messagesToSend addObject:data];
+    WSMessage *message = [[WSMessage alloc] init];
+    
+    message.opcode = WSWebSocketOpcodeBinary;
+    message.data = data;
+
+    [messageProcessor queueMessage:message];
     [self sendData];
 }
 
 - (void)threadedSendText:(NSString *)text {
-    [messagesToSend addObject:text];
+    WSMessage *message = [[WSMessage alloc] init];
+
+    message.opcode = WSWebSocketOpcodeText;
+    message.text = text;
+    
+    [messageProcessor queueMessage:message];
     [self sendData];
 }
 
 - (void)threadedSendPingWithData:(NSData *)data {
-    [self sendFrameWithType:WSWebSocketOpcodePing data:data];
-    [self sendData];
+    if (state == WSWebSocketStateConnecting || state == WSWebSocketStateOpen) {
+        WSFrame *frame = [[WSFrame alloc] initWithOpcode:WSWebSocketOpcodePing data:data maxSize:fragmentSize];
+        [messageProcessor queueFrame:frame];
+        [self sendData];
+    }
 }
 
 
@@ -838,7 +574,6 @@ typedef enum {
 
 
 - (void)open {
-    
     if (state != WSWebSocketStateNone) {
         return;
     }
