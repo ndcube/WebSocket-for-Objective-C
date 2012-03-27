@@ -15,32 +15,34 @@
 #import "WSMessage.h"
 #import "WSMessageProcessor.h"
 
+#define WSSafeCFRelease(obj) if (obj) CFRelease(obj)
+
 
 static const NSUInteger WSNonceSize = 16;
 static const NSUInteger WSPort = 80;
 static const NSUInteger WSPortSecure = 443;
 static NSString *const WSAcceptGUID = @"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-
 static NSString *const WSScheme = @"ws";
 static NSString *const WSSchemeSecure = @"wss";
 
-static NSString *const WSConnection = @"Connection";
-static NSString *const WSConnectionValue = @"Upgrade";
-static NSString *const WSGet = @"GET";
-static NSString *const WSHost = @"Host";
-static NSString *const WSHTTP11 = @"HTTP/1.1";
-static NSString *const WSOrigin = @"Origin";
-static NSString *const WSUpgrade = @"Upgrade";
-static NSString *const WSUpgradeValue = @"websocket";
-static NSString *const WSVersion = @"13";
+static CFStringRef const kWSConnection = CFSTR("Connection");
+static CFStringRef const kWSConnectionValue = CFSTR("Upgrade");
+static CFStringRef const kWSGet = CFSTR("GET");
+static CFStringRef const kWSHost = CFSTR("Host");
+static CFStringRef const kWSHTTP11 = CFSTR("HTTP/1.1");
+static CFStringRef const kWSOrigin = CFSTR("Origin");
+static CFStringRef const kWSUpgrade = CFSTR("Upgrade");
+static CFStringRef const kWSUpgradeValue = CFSTR("websocket");
+static CFStringRef const kWSVersion = CFSTR("13");
+static CFStringRef const kWSContentLength = CFSTR("Content-Length");
 
-static NSString *const WSSecWebSocketAccept = @"Sec-WebSocket-Accept";
-static NSString *const WSSecWebSocketExtensions = @"Sec-WebSocket-Extensions";
-static NSString *const WSSecWebSocketKey = @"Sec-WebSocket-Key";
-static NSString *const WSSecWebSocketProtocol = @"Sec-WebSocket-Protocol";
-static NSString *const WSSecWebSocketVersion = @"Sec-WebSocket-Version";
+static CFStringRef const kWSSecWebSocketAccept = CFSTR("Sec-WebSocket-Accept");
+static CFStringRef const kWSSecWebSocketExtensions = CFSTR("Sec-WebSocket-Extensions");
+static CFStringRef const kWSSecWebSocketKey = CFSTR("Sec-WebSocket-Key");
+static CFStringRef const kWSSecWebSocketProtocol = CFSTR("Sec-WebSocket-Protocol");
+static CFStringRef const kWSSecWebSocketVersion = CFSTR("Sec-WebSocket-Version");
 
-static NSString *const WSHTTPCode101 = @"101";
+static const NSUInteger WSHTTPCode101 = 101;
 
 
 typedef enum {
@@ -285,28 +287,7 @@ typedef enum {
     }
 
     if (state == WSWebSocketStateConnecting) {
-        
-        uint8_t *dataBytes = (uint8_t *)[dataReceived bytes];
-        
-        // Find end of the header
-        for (int i = 0; i < dataReceived.length - 3; i++) {
-            if (dataBytes[i] == 0x0d && dataBytes[i + 1] == 0x0a && dataBytes[i + 2] == 0x0d && dataBytes[i + 3] == 0x0a) {
-                NSData *handshake = [NSData dataWithBytesNoCopy:dataReceived.mutableBytes length:i + 4 freeWhenDone:NO];
-                
-                [self didReceiveOpeningHandshakeWithData:handshake];
-                
-                // Remove the processed handshake data
-                if (dataReceived.length == i + 4) {
-                    dataReceived = nil;
-                }
-                // The remaining bytes are preserved
-                else {
-                    dataBytes += (i + 4);
-                    dataReceived = [[NSMutableData alloc] initWithBytes:dataBytes length:dataReceived.length - (i + 4)];
-                }
-                break;
-            }
-        }
+        [self processResponse];
     }    
 
     if (state == WSWebSocketStateOpen || state == WSWebSocketStateClosing) {
@@ -315,6 +296,7 @@ typedef enum {
         while (messageProcessor.bytesConstructed != dataReceived.length && [self constructMessage]) {
         }
         
+        // All data processed
         if (messageProcessor.bytesConstructed == dataReceived.length) {
             dataReceived = nil;
             messageProcessor.bytesConstructed = 0;
@@ -451,63 +433,125 @@ typedef enum {
 
 - (void)sendOpeningHandshake {
     NSString *nonce = [self nonce];
-    NSString *pathQuery = (hostURL.query) ? [NSString stringWithFormat:@"%@?%@", hostURL.path, hostURL.query] : hostURL.path.length ? hostURL.path : @"/";
     NSString *hostPort = (hostURL.port) ? [NSString stringWithFormat:@"%@:%@", hostURL.host, hostURL.port] : hostURL.host;
     
-    NSString *handshake = [NSString stringWithFormat:
-                           @"%@ %@ %@\r\n%@: %@\r\n%@: %@\r\n%@: %@\r\n%@: %@\r\n%@: %@\r\n\r\n",
-                           WSGet, pathQuery, WSHTTP11,
-                           WSHost, hostPort,
-                           WSUpgrade, WSUpgradeValue,
-                           WSConnection, WSConnectionValue,
-                           WSSecWebSocketVersion, WSVersion,
-                           WSSecWebSocketKey, nonce];
+    CFHTTPMessageRef message = CFHTTPMessageCreateRequest(kCFAllocatorDefault, kWSGet, (__bridge CFURLRef)hostURL, kWSHTTP11);
+
+    NSAssert(message, @"Message could not be created from url: %@", hostURL);
     
-    dataToSend = [handshake dataUsingEncoding:NSUTF8StringEncoding];
+    CFHTTPMessageSetHeaderFieldValue(message, kWSHost, (__bridge CFStringRef)hostPort);
+    CFHTTPMessageSetHeaderFieldValue(message, kWSUpgrade, kWSUpgradeValue);
+    CFHTTPMessageSetHeaderFieldValue(message, kWSConnection, kWSConnectionValue);
+    CFHTTPMessageSetHeaderFieldValue(message, kWSSecWebSocketVersion, kWSVersion);
+    CFHTTPMessageSetHeaderFieldValue(message, kWSSecWebSocketKey, (__bridge CFStringRef)nonce);
+    
+    CFDataRef messageData = CFHTTPMessageCopySerializedMessage(message);
+    dataToSend = (__bridge_transfer NSData *)messageData;
     acceptKey = [self acceptKeyFromNonce:nonce];
+    
+    CFRelease(message);
+    
+//    NSLog(@"%@", [[NSString alloc] initWithData:dataToSend encoding:NSUTF8StringEncoding]);
 }
 
-- (NSInteger)indexOfHeaderField:(NSString *)headerField inComponents:(NSArray *)components {
-    NSInteger index = 0;
+- (BOOL)isValidHandshake:(CFHTTPMessageRef)response {
 
-    for (NSString *component in components) {
-        if ([component isEqualToString:[NSString stringWithFormat:@"%@:", headerField]]) {
-            return index;
+    BOOL isValid = YES;
+    
+    uint32_t responseStatusCode = CFHTTPMessageGetResponseStatusCode(response);
+    
+    if (responseStatusCode != WSHTTPCode101) {
+        isValid = NO;
+    }
+
+    CFStringRef upgradeValue = CFHTTPMessageCopyHeaderFieldValue(response, kWSUpgrade);
+    CFStringRef connectionValue = CFHTTPMessageCopyHeaderFieldValue(response, kWSConnection);
+    CFStringRef acceptValue = CFHTTPMessageCopyHeaderFieldValue(response, kWSSecWebSocketAccept);
+    
+    if (!upgradeValue || CFStringCompare(upgradeValue, kWSUpgradeValue, kCFCompareCaseInsensitive) != kCFCompareEqualTo) {
+        isValid = NO;
+    }
+
+    if (!connectionValue || CFStringCompare(connectionValue, kWSConnectionValue, kCFCompareCaseInsensitive) != kCFCompareEqualTo) {
+        isValid = NO;
+    }
+
+    if (!acceptValue || CFStringCompare(acceptValue, (__bridge CFStringRef)acceptKey, kCFCompareCaseInsensitive) != kCFCompareEqualTo) {
+        isValid = NO;
+    }
+
+    WSSafeCFRelease(upgradeValue);
+    WSSafeCFRelease(connectionValue);
+    WSSafeCFRelease(acceptValue);
+
+//    CFDataRef messageData = CFHTTPMessageCopySerializedMessage(response);
+//    NSLog(@"%@", [[NSString alloc] initWithData:(__bridge_transfer NSData*)messageData encoding:NSUTF8StringEncoding]);
+
+    return isValid;
+}
+
+- (void)processResponse {
+    uint8_t *dataBytes = (uint8_t *)[dataReceived bytes];
+    
+    // Find end of the header
+    for (int i = 0; i < dataReceived.length - 3; i++) {
+        
+        // If we have complete header
+        if (dataBytes[i] == 0x0d && dataBytes[i + 1] == 0x0a && dataBytes[i + 2] == 0x0d && dataBytes[i + 3] == 0x0a) {
+            
+            NSUInteger responseLength = i + 4;
+            BOOL isResponseComplete = YES;
+            
+            // Create a CFMessage from the response
+            CFHTTPMessageRef response = CFHTTPMessageCreateEmpty(kCFAllocatorDefault, NO);
+            CFHTTPMessageAppendBytes(response, dataBytes, responseLength);
+            
+            // Check if it has a body
+            CFStringRef contentLengthString = CFHTTPMessageCopyHeaderFieldValue(response, kWSContentLength);
+            
+            if (contentLengthString) {
+                
+                NSUInteger contentLength = CFStringGetIntValue(contentLengthString);
+                responseLength += contentLength;
+                
+                // Not enough data received - body is not complete
+                if (dataReceived.length < responseLength) {
+                    isResponseComplete = NO;
+                }
+                else {
+                    // Add the body data to the response
+                    uint8_t *contentBytes = (uint8_t *)(dataBytes + i + 4);
+                    CFHTTPMessageAppendBytes(response, contentBytes, contentLength);
+                }
+                
+                CFRelease(contentLengthString);
+            }
+            
+            if (isResponseComplete) {
+                // Analize it
+                [self analyzeResponse:response];
+                
+                // Remove the processed handshake data
+                if (dataReceived.length == responseLength) {
+                    dataReceived = nil;
+                }
+                // The remaining bytes are preserved
+                else {
+                    dataBytes += responseLength;
+                    dataReceived = [[NSMutableData alloc] initWithBytes:dataBytes length:dataReceived.length - responseLength];
+                }
+            }
+            
+            CFRelease(response);
+            
+            break;
         }
-        index++;
     }
-    
-    return -1;
 }
 
-- (BOOL)isValidHandshake:(NSString *)handshake {
-    NSArray *components = [handshake componentsSeparatedByCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+- (void)analyzeResponse:(CFHTTPMessageRef)response {
     
-    if (![[components objectAtIndex:1] isEqualToString:WSHTTPCode101]) {
-        return NO;
-    }
-
-    NSInteger upgradeIndex = [self indexOfHeaderField:WSUpgrade inComponents:components];
-    NSInteger connectionIndex = [self indexOfHeaderField:WSConnection inComponents:components];
-    NSInteger acceptIndex = [self indexOfHeaderField:WSSecWebSocketAccept inComponents:components];
-    
-    if (![[[components objectAtIndex:upgradeIndex + 1] lowercaseString] isEqualToString:WSUpgradeValue.lowercaseString]) {
-        return NO;
-    }
-
-    if (![[[components objectAtIndex:connectionIndex + 1] lowercaseString] isEqualToString:WSConnectionValue.lowercaseString]) {
-        return NO;
-    }
-    
-    if (![[components objectAtIndex:acceptIndex + 1] isEqualToString:acceptKey]) {
-        return NO;
-    }
-
-    return YES;
-}
-
-- (void)didReceiveOpeningHandshakeWithData:(NSData *)handshakeData {
-    if ([self isValidHandshake:[[NSString alloc] initWithData:handshakeData encoding:NSUTF8StringEncoding]]) {
+    if ([self isValidHandshake:response]) {
         state = WSWebSocketStateOpen;
         [self sendData];
     }
