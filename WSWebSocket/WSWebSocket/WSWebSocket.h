@@ -24,10 +24,16 @@
 @property (strong, nonatomic, readonly) NSURL *hostURL;
 
 /**
+ The protocol selected by the server.
+ */
+@property (strong, nonatomic, readonly) NSString *selectedProtocol;
+
+/**
  Designated initializer.
  @param url The url of the server to connect
+ @param protocols An optional array of protocol strings
  */
-- (id)initWithURL:(NSURL *)url;
+- (id)initWithURL:(NSURL *)url protocols:(NSArray *)protocols;
 
 /**
  Opens the connection.
@@ -80,5 +86,20 @@
  @param closeCallback The callback block
  */
 - (void)setCloseCallback:(void (^)(NSUInteger statusCode, NSString *message))closeCallback;
+
+/**
+ Sends the given request.
+ Use this method to send a preconfigured request to handle authentication.
+ Websocket related header fields are added automatically. Should be used after getting a response callback.
+ @param request The request to be sent
+ */
+- (void)sendRequest:(NSURLRequest *)request;
+
+/**
+ Sets a callback block that will be called whenever a response is received.
+ Use this callback to handle authentication and to set any cookies received.
+ @param responseCallback The callback block
+ */
+- (void)setResponseCallback:(void (^)(NSHTTPURLResponse *response, NSData *data))responseCallback;
 
 @end

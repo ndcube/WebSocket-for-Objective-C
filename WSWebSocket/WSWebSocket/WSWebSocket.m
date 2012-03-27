@@ -55,6 +55,8 @@ typedef enum {
 
 
 @implementation WSWebSocket {
+    NSArray *protocols;
+    
     NSInputStream *inputStream;
     NSOutputStream *outputStream;
     BOOL hasSpaceAvailable;
@@ -72,6 +74,7 @@ typedef enum {
     void (^textCallback)(NSString *text);
     void (^pongCallback)(void);
     void (^closeCallback)(NSUInteger statusCode, NSString *message);
+    void (^responseCallback)(NSHTTPURLResponse *response, NSData *data);
 
     WSMessageProcessor *messageProcessor;    
     WSFrame *currentFrame;
@@ -82,6 +85,8 @@ typedef enum {
 
 @synthesize fragmentSize;
 @synthesize hostURL;
+@synthesize selectedProtocol;
+
 
 - (void)setFragmentSize:(NSUInteger)aFragmentSize {
     fragmentSize = aFragmentSize;
@@ -97,11 +102,12 @@ typedef enum {
 #pragma mark - Object lifecycle
 
 
-- (id)initWithURL:(NSURL *)url {
+- (id)initWithURL:(NSURL *)url protocols:(NSArray *)protocolStrings {
     self = [super init];
     if (self) {
         [self analyzeURL:url];
         hostURL = url;
+        protocols = protocolStrings;
         messageProcessor = [[WSMessageProcessor alloc] init];
         self.fragmentSize = NSUIntegerMax;
         callbackQueue = dispatch_queue_create("WebSocket callback queue", DISPATCH_QUEUE_SERIAL);
@@ -131,6 +137,10 @@ typedef enum {
 
 - (void)setCloseCallback:(void (^)(NSUInteger statusCode, NSString *message))aCloseCallback {
     closeCallback = aCloseCallback;
+}
+
+- (void)setResponseCallback:(void (^)(NSHTTPURLResponse *response, NSData *data))aResponseCallback {
+    responseCallback = aResponseCallback;
 }
 
 
@@ -431,19 +441,54 @@ typedef enum {
 #pragma mark - Handshake
 
 
-- (void)sendOpeningHandshake {
+- (void)sendOpeningHandshakeWithRequest:(NSURLRequest *)request {
     NSString *nonce = [self nonce];
     NSString *hostPort = (hostURL.port) ? [NSString stringWithFormat:@"%@:%@", hostURL.host, hostURL.port] : hostURL.host;
     
-    CFHTTPMessageRef message = CFHTTPMessageCreateRequest(kCFAllocatorDefault, kWSGet, (__bridge CFURLRef)hostURL, kWSHTTP11);
+    CFHTTPMessageRef message;
 
     NSAssert(message, @"Message could not be created from url: %@", hostURL);
+
+    if (request) {
+        message = CFHTTPMessageCreateRequest(kCFAllocatorDefault, (__bridge CFStringRef)request.HTTPMethod, (__bridge CFURLRef)request.URL, kWSHTTP11);
+        
+        // Copy header fields from request
+        for (NSString *headerField in request.allHTTPHeaderFields) {
+            CFHTTPMessageSetHeaderFieldValue(message, (__bridge CFStringRef)headerField, (__bridge CFStringRef)[request.allHTTPHeaderFields objectForKey:headerField]);
+        }
+        
+        // Copy body
+        if (request.HTTPBody) {
+            CFHTTPMessageSetBody(message, (__bridge CFDataRef)request.HTTPBody);
+        }
+        
+    }
+    else {
+        message = CFHTTPMessageCreateRequest(kCFAllocatorDefault, kWSGet, (__bridge CFURLRef)hostURL, kWSHTTP11);
+    }
     
     CFHTTPMessageSetHeaderFieldValue(message, kWSHost, (__bridge CFStringRef)hostPort);
     CFHTTPMessageSetHeaderFieldValue(message, kWSUpgrade, kWSUpgradeValue);
     CFHTTPMessageSetHeaderFieldValue(message, kWSConnection, kWSConnectionValue);
     CFHTTPMessageSetHeaderFieldValue(message, kWSSecWebSocketVersion, kWSVersion);
     CFHTTPMessageSetHeaderFieldValue(message, kWSSecWebSocketKey, (__bridge CFStringRef)nonce);
+
+    NSMutableString *protocolList;
+
+    // Create a protocol list from the protocol strings
+    for (NSString *protocolString in protocols) {
+        if (!protocolList) {
+            protocolList = [[NSMutableString alloc] initWithString:protocolString];
+        }
+        else {
+            [protocolList appendFormat:@",%@", protocolString];
+        }
+    }
+    
+    // Set the web socket protocol field
+    if (protocolList.length) {
+        CFHTTPMessageSetHeaderFieldValue(message, kWSSecWebSocketProtocol, (__bridge CFStringRef)protocolList);
+    }
     
     CFDataRef messageData = CFHTTPMessageCopySerializedMessage(message);
     dataToSend = (__bridge_transfer NSData *)messageData;
@@ -455,7 +500,6 @@ typedef enum {
 }
 
 - (BOOL)isValidHandshake:(CFHTTPMessageRef)response {
-
     BOOL isValid = YES;
     
     uint32_t responseStatusCode = CFHTTPMessageGetResponseStatusCode(response);
@@ -467,6 +511,7 @@ typedef enum {
     CFStringRef upgradeValue = CFHTTPMessageCopyHeaderFieldValue(response, kWSUpgrade);
     CFStringRef connectionValue = CFHTTPMessageCopyHeaderFieldValue(response, kWSConnection);
     CFStringRef acceptValue = CFHTTPMessageCopyHeaderFieldValue(response, kWSSecWebSocketAccept);
+    CFStringRef protocolValue = CFHTTPMessageCopyHeaderFieldValue(response, kWSSecWebSocketProtocol);
     
     if (!upgradeValue || CFStringCompare(upgradeValue, kWSUpgradeValue, kCFCompareCaseInsensitive) != kCFCompareEqualTo) {
         isValid = NO;
@@ -480,6 +525,16 @@ typedef enum {
         isValid = NO;
     }
 
+    if (protocolValue) {
+        selectedProtocol = (__bridge_transfer NSString *)protocolValue;
+
+        // Selected protocol is not in the protocol list - it should fail the connection
+        if ([protocols indexOfObject:selectedProtocol] == NSNotFound) {
+            isValid = NO;
+            [self closeConnection];
+        }
+    }
+    
     WSSafeCFRelease(upgradeValue);
     WSSafeCFRelease(connectionValue);
     WSSafeCFRelease(acceptValue);
@@ -488,6 +543,26 @@ typedef enum {
 //    NSLog(@"%@", [[NSString alloc] initWithData:(__bridge_transfer NSData*)messageData encoding:NSUTF8StringEncoding]);
 
     return isValid;
+}
+
+- (void)analyzeResponse:(CFHTTPMessageRef)response {
+    
+    if ([self isValidHandshake:response]) {
+        state = WSWebSocketStateOpen;
+        [self sendData];
+    }
+    else {
+        if (responseCallback) {
+            uint32_t responseStatusCode = CFHTTPMessageGetResponseStatusCode(response);
+            NSDictionary *headerFields = (__bridge_transfer NSDictionary *)CFHTTPMessageCopyAllHeaderFields(response);
+            NSHTTPURLResponse *HTTPURLResponse = [[NSHTTPURLResponse alloc] initWithURL:hostURL statusCode:responseStatusCode HTTPVersion:(__bridge NSString *)kWSHTTP11 headerFields:headerFields];
+            NSData *data = (__bridge_transfer NSData *)CFHTTPMessageCopyBody(response);
+            responseCallback(HTTPURLResponse, data);
+        }
+        else {
+            [self closeConnection];
+        }
+    }
 }
 
 - (void)processResponse {
@@ -528,6 +603,7 @@ typedef enum {
             }
             
             if (isResponseComplete) {
+                
                 // Analize it
                 [self analyzeResponse:response];
                 
@@ -549,17 +625,6 @@ typedef enum {
     }
 }
 
-- (void)analyzeResponse:(CFHTTPMessageRef)response {
-    
-    if ([self isValidHandshake:response]) {
-        state = WSWebSocketStateOpen;
-        [self sendData];
-    }
-    else {
-        [self closeConnection];
-    }
-}
-
 
 #pragma mark - Thread
 
@@ -578,7 +643,7 @@ typedef enum {
 
 - (void)threadedOpen {
     [self initiateConnection];
-    [self sendOpeningHandshake];
+    [self sendOpeningHandshakeWithRequest:nil];
 }
 
 - (void)threadedClose {
@@ -611,6 +676,11 @@ typedef enum {
         [messageProcessor queueFrame:frame];
         [self sendData];
     }
+}
+
+- (void)threadedSendRequest:(NSURLRequest *)request {
+    [self sendOpeningHandshakeWithRequest:request];
+    [self sendData];
 }
 
 
@@ -651,6 +721,11 @@ typedef enum {
 
 - (void)sendPingWithData:(NSData *)data {
     [self performSelector:@selector(threadedSendPingWithData:) onThread:wsThread withObject:data waitUntilDone:NO];
+}
+
+- (void)sendRequest:(NSURLRequest *)request {
+    NSAssert(state == WSWebSocketStateConnecting, @"Requests can only be sent during connecting.");
+    [self performSelector:@selector(threadedSendRequest:) onThread:wsThread withObject:request waitUntilDone:NO];
 }
 
 @end
