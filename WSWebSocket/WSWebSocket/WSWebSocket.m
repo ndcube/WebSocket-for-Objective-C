@@ -551,17 +551,20 @@ typedef enum {
         state = WSWebSocketStateOpen;
         [self sendData];
     }
-    else {
-        if (responseCallback) {
-            uint32_t responseStatusCode = CFHTTPMessageGetResponseStatusCode(response);
-            NSDictionary *headerFields = (__bridge_transfer NSDictionary *)CFHTTPMessageCopyAllHeaderFields(response);
-            NSHTTPURLResponse *HTTPURLResponse = [[NSHTTPURLResponse alloc] initWithURL:hostURL statusCode:responseStatusCode HTTPVersion:(__bridge NSString *)kWSHTTP11 headerFields:headerFields];
-            NSData *data = (__bridge_transfer NSData *)CFHTTPMessageCopyBody(response);
+
+    if (responseCallback) {
+
+        uint32_t responseStatusCode = CFHTTPMessageGetResponseStatusCode(response);
+        NSDictionary *headerFields = (__bridge_transfer NSDictionary *)CFHTTPMessageCopyAllHeaderFields(response);
+        NSHTTPURLResponse *HTTPURLResponse = [[NSHTTPURLResponse alloc] initWithURL:hostURL statusCode:responseStatusCode HTTPVersion:(__bridge NSString *)kWSHTTP11 headerFields:headerFields];
+        NSData *data = (__bridge_transfer NSData *)CFHTTPMessageCopyBody(response);
+
+        dispatch_async(callbackQueue, ^{
             responseCallback(HTTPURLResponse, data);
-        }
-        else {
-            [self closeConnection];
-        }
+        });
+    }
+    else if (state == WSWebSocketStateConnecting) {
+        [self closeConnection];
     }
 }
 
