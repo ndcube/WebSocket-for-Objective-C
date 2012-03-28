@@ -1,4 +1,4 @@
-WSWebSocket is a websocket client implementation based on the latest standard [RFC 6455][RFC].
+WSWebSocket is a websocket client implementation based on the latest standard [RFC 6455][RFC]. Licensed under the MIT license.
 
 Tested with [Autobahn WebSockets Protocol Test Suite][Autobahn].  
 **Current results are:**
