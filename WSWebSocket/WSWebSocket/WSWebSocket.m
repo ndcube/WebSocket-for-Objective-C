@@ -466,8 +466,6 @@ typedef enum {
     
     CFHTTPMessageRef message;
 
-    NSAssert(message, @"Message could not be created from url: %@", hostURL);
-
     if (request) {
         message = CFHTTPMessageCreateRequest(kCFAllocatorDefault, (__bridge CFStringRef)request.HTTPMethod, (__bridge CFURLRef)request.URL, kWSHTTP11);
         
@@ -485,6 +483,8 @@ typedef enum {
     else {
         message = CFHTTPMessageCreateRequest(kCFAllocatorDefault, kWSGet, (__bridge CFURLRef)hostURL, kWSHTTP11);
     }
+
+    NSAssert(message, @"Message could not be created from url: %@", hostURL);
     
     CFHTTPMessageSetHeaderFieldValue(message, kWSHost, (__bridge CFStringRef)hostPort);
     CFHTTPMessageSetHeaderFieldValue(message, kWSUpgrade, kWSUpgradeValue);
