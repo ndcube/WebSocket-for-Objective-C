@@ -443,7 +443,9 @@ typedef enum {
             }
             break;
         case NSStreamEventErrorOccurred:
-            NSLog(@"Error: %@", aStream.streamError);
+            statusCode = aStream.streamError.code;
+            closingReason = [NSString stringWithFormat:@"%@ - %@", aStream.streamError.domain, aStream.streamError.localizedDescription];
+            [self closeConnection];
             break;
         case NSStreamEventEndEncountered:
             [self closeConnection];
