@@ -18,6 +18,8 @@ Currently does not support:
 
 Handling authentication, setting cookies are left to the user through the corresponding response callback and sendRequest method.
 
+Projects using this library should be linked against the following frameworks: **CFNetwork**, **Security**
+
 **Example of usage**
 
     NSURL *url = [NSURL URLWithString:@"ws://echo.websocket.org"];
